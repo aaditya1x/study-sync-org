@@ -4,6 +4,7 @@ import styles from "./Navbar.module.css";
 
 export default function Navbar({
   title, query, onQueryChange, searchResults = [], onSelectSearchResult,
+  showSearch = false,
   onMenu, mobileNavOpen = false, profilePicture = "", onOpenSettings,
   username = "Student", onLogout,
 }) {
@@ -40,6 +41,7 @@ export default function Navbar({
   }
 
   return (
+    <>
     <header className={styles.header}>
       <div className={styles.left}>
         <button type="button" className={styles.menu} onClick={onMenu} aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileNavOpen}>
@@ -48,6 +50,15 @@ export default function Navbar({
         <div className={styles.breadcrumb}><span className={styles.workspaceLabel}>Workspace</span><span className={styles.separator}>/</span><strong>{title}</strong></div>
       </div>
       <div className={styles.actions}>
+        <button type="button" className={styles.avatarButton} title={`Manage profile for ${username}`} aria-label="Open profile settings" onClick={onOpenSettings}>
+          {profilePicture ? <img src={profilePicture} alt="" /> : <span>{username.slice(0, 2).toUpperCase()}</span>}
+          <span className={styles.camera}><UserRound size={10} /></span>
+        </button>
+        <span className={styles.username}>{username}</span>
+        <button type="button" className={styles.logout} onClick={onLogout} title="Log out"><LogOut size={15} /><span>Log out</span></button>
+      </div>
+    </header>
+    {showSearch && <div className={styles.searchRow}>
         <div className={styles.searchWrap} ref={searchRef}>
           <label className={styles.search}>
             <Search size={16} aria-hidden="true" />
@@ -81,13 +92,7 @@ export default function Navbar({
             </div>
           )}
         </div>
-        <button type="button" className={styles.avatarButton} title={`Manage profile for ${username}`} aria-label="Open profile settings" onClick={onOpenSettings}>
-          {profilePicture ? <img src={profilePicture} alt="" /> : <span>{username.slice(0, 2).toUpperCase()}</span>}
-          <span className={styles.camera}><UserRound size={10} /></span>
-        </button>
-        <span className={styles.username}>{username}</span>
-        <button type="button" className={styles.logout} onClick={onLogout} title="Log out"><LogOut size={15} /><span>Log out</span></button>
-      </div>
-    </header>
+      </div>}
+    </>
   );
 }

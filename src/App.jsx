@@ -344,6 +344,7 @@ async function handleLogout() {
 
 
   function handleNavigate(id) {
+    setQuery("");
     setActive(id);
     setMobileNavOpen(false);
   }
@@ -455,6 +456,7 @@ async function handleLogout() {
       <main className={styles.main}>
         <Navbar
           title={title}
+          showSearch={active === "Dashboard"}
           query={query}
           onQueryChange={setQuery}
           searchResults={searchResults}
