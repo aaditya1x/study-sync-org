@@ -1,19 +1,19 @@
-.card { min-width:0; padding:16px; border:1px solid var(--line); border-radius:14px; background:var(--surface); transition:transform .18s,border-color .18s; }
-.card:hover { transform:translateY(-2px); border-color:color-mix(in srgb,var(--primary) 38%,var(--line)); }
-.top { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:14px; }
-.courseIcon { width:39px; height:39px; display:grid; place-items:center; border-radius:12px; }
-.semester { padding:5px 8px; border-radius:99px; color:var(--muted); background:var(--surface-soft); font-size:10px; font-weight:700; }
-.card h3 { margin:0; font-size:13px; line-height:1.45; }
-.code { margin:5px 0 15px; color:var(--muted); font-size:10px; }
-.progressLabel { display:flex; justify-content:space-between; margin-bottom:6px; color:var(--muted); font-size:10px; }
-.progressLabel b { color:var(--text); }
-.track { height:6px; overflow:hidden; background:var(--line); border-radius:99px; }
-.track span { display:block; height:100%; border-radius:99px; transition:width .3s ease; }
-.open { display:flex; align-items:center; justify-content:space-between; width:100%; margin-top:13px; padding:8px 10px; border:0; border-radius:9px; background:var(--primary-soft); color:var(--primary); font-size:10px; font-weight:800; }
+.card { display:flex; min-width:0; flex-direction:column; padding:16px; border:1px solid var(--line); border-radius:14px; background:var(--surface); transition:transform .18s,border-color .18s,box-shadow .18s; }
+.card:hover { transform:translateY(-2px); border-color:color-mix(in srgb,var(--primary) 38%,var(--line)); box-shadow:var(--shadow); }
+.top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.courseIcon { display:grid; width:38px; height:38px; place-items:center; border-radius:11px; color:var(--primary); }
+.semester { padding:5px 8px; border-radius:99px; color:var(--muted); background:var(--surface-soft); font-size:10px; font-weight:700; white-space:nowrap; }
+.card h3 { margin:14px 0 4px; color:var(--text); font-size:14px; line-height:1.4; overflow-wrap:anywhere; }
+.code { margin:0 0 15px; color:var(--muted); font-size:10px; overflow-wrap:anywhere; }
+.code span { padding:0 3px; }
+.progressLabel { display:flex; justify-content:space-between; gap:8px; margin-bottom:6px; color:var(--muted); font-size:10px; }
+.progressLabel b { color:var(--primary); }
+.track { height:6px; overflow:hidden; border-radius:99px; background:var(--line); }
+.track span { display:block; height:100%; border-radius:inherit; background:var(--primary); transition:width .2s ease; }
+.progressNote { min-height:14px; margin:6px 0 0; color:var(--muted); font-size:9px; }
+.actions { display:flex; align-items:center; gap:7px; margin-top:auto; padding-top:14px; }
+.open { display:flex; flex:1; align-items:center; justify-content:center; gap:6px; min-height:34px; padding:8px; border:0; border-radius:9px; background:var(--primary-soft); color:var(--primary); font-size:10px; font-weight:800; cursor:pointer; }
+.open:hover { filter:brightness(.97); }
+.delete { display:grid; width:34px; height:34px; flex:none; place-items:center; border:1px solid var(--line); border-radius:9px; background:var(--surface); color:var(--muted); cursor:pointer; }
+.delete:hover { border-color:#dc9999; color:#c94242; background:color-mix(in srgb,#e45c5c 8%,var(--surface)); }
 @media(prefers-reduced-motion:reduce) { .card,.track span { transition:none; } }
-
-.delete { margin-left:auto; width:28px; height:28px; display:grid; place-items:center; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--muted); }
-.delete:hover,.deleteText:hover { color:#dc4c4c; background:#fff0ed; border-color:#ffd5cd; }
-.actions { display:flex; align-items:center; gap:7px; margin-top:13px; }
-.open { margin-top:0; flex:1; }
-.deleteText { display:flex; align-items:center; justify-content:center; gap:4px; padding:8px 7px; border:1px solid var(--line); border-radius:9px; background:var(--surface); color:var(--muted); font-size:10px; font-weight:750; white-space:nowrap; }

@@ -7,6 +7,30 @@
   min-width: 0;
 }
 
+.compact {
+  width: auto;
+  flex: 0 1 auto;
+}
+
+.compact .label {
+  display: none;
+}
+
+.compact .select {
+  width: auto;
+  max-width: 128px;
+  min-height: 37px;
+  padding: 7px 25px 7px 9px;
+  font-size: 11px;
+}
+
+@media (max-width: 420px) {
+  .compact .select {
+    max-width: 72px;
+    padding-right: 20px;
+  }
+}
+
 .label {
   display: flex;
   align-items: center;

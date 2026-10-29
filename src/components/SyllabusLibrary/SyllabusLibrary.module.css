@@ -1,0 +1,143 @@
+.page {
+  display: grid;
+  gap: 22px;
+  padding: 8px 0 32px;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 16px;
+  color: var(--accent, #7257d8);
+  background: color-mix(in srgb, var(--accent, #7257d8) 12%, transparent);
+}
+
+.eyebrow {
+  margin: 0 0 5px;
+  color: var(--accent, #7257d8);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.heading h1 {
+  margin: 0;
+  color: var(--text-primary, #202438);
+  font-size: clamp(24px, 4vw, 32px);
+}
+
+.heading p:last-child {
+  margin: 5px 0 0;
+  color: var(--text-secondary, #73788b);
+}
+
+.notice {
+  padding: 13px 16px;
+  border: 1px solid var(--border, #e7e8ee);
+  border-radius: 14px;
+  color: var(--text-secondary, #62677b);
+  background: var(--surface, #fff);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 15px;
+}
+
+.card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--border, #e7e8ee);
+  border-radius: 18px;
+  background: var(--surface, #fff);
+  box-shadow: 0 8px 24px rgb(31 37 59 / 4%);
+}
+
+.cardTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-secondary, #73788b);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.year {
+  flex: 0 0 auto;
+}
+
+.card h2 {
+  margin: 0;
+  color: var(--text-primary, #202438);
+  font-size: 17px;
+  line-height: 1.35;
+}
+
+.card p {
+  margin: 0;
+  color: var(--text-secondary, #73788b);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.card small {
+  margin-top: auto;
+  color: var(--text-secondary, #8a8ea0);
+  font-size: 11px;
+}
+
+.card a,
+.empty a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 9px 12px;
+  border-radius: 11px;
+  color: white;
+  background: var(--accent, #7257d8);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.card a:hover,
+.empty a:hover {
+  filter: brightness(.95);
+}
+
+.empty {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 36px 20px;
+  border: 1px dashed var(--border, #d8dae3);
+  border-radius: 16px;
+  color: var(--text-secondary, #73788b);
+  text-align: center;
+}
+
+.empty p {
+  margin: 0;
+}
+
+@media (max-width: 540px) {
+  .page { gap: 16px; }
+  .card { padding: 15px; }
+}

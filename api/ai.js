@@ -1,4 +1,18 @@
 
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const publishableKey =
+  process.env.SUPABASE_PUBLISHABLE_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY;
+const authClient = supabaseUrl && publishableKey
+  ? createClient(supabaseUrl, publishableKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  : null;
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -9,10 +23,21 @@ export default async function handler(req, res) {
 
   const apiKey = process.env.GEMINI_API_KEY;
 
-  if (!apiKey) {
+  if (!apiKey || !authClient) {
     return res.status(500).json({
-      error: "GEMINI_API_KEY is missing from Vercel environment variables.",
+      error: "Gemini or Supabase server environment variables are missing.",
     });
+  }
+
+  const authorization = req.headers.authorization || "";
+  const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!token) {
+    return res.status(401).json({ error: "Please sign in to use AI Study Tools." });
+  }
+
+  const { data: authData, error: authError } = await authClient.auth.getUser(token);
+  if (authError || !authData?.user) {
+    return res.status(401).json({ error: "Your session expired. Please sign in again." });
   }
 
   const { mode, text } = req.body || {};

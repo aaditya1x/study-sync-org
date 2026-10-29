@@ -4,7 +4,7 @@
 .logo { width:37px; height:37px; display:grid; place-items:center; color:white; background:linear-gradient(135deg,#6c5ce7,#9d8eff); border-radius:12px; }
 .label { padding:0 12px; color:var(--muted); font-size:10px; font-weight:850; letter-spacing:1.6px; margin:0 0 10px; }
 .nav { display:grid; gap:5px; }
-.navItem { display:flex; align-items:center; gap:12px; width:100%; padding:12px; border:0; border-radius:11px; background:transparent; color:var(--muted); text-align:left; font-size:13px; font-weight:650; transition:background .18s,color .18s,transform .18s; }
+.navItem { display:flex; align-items:center; gap:12px; width:100%; min-height:44px; padding:12px; border:0; border-radius:11px; background:transparent; color:var(--muted); text-align:left; font-size:13px; font-weight:650; transition:background .18s,color .18s,transform .18s; }
 .navItem:hover { background:var(--surface-soft); color:var(--text); transform:translateX(2px); }
 .active,.active:hover { color:var(--primary); background:var(--primary-soft); }
 .bottom { margin-top:auto; border:1px solid var(--line); background:var(--surface-soft); padding:15px; border-radius:15px; }

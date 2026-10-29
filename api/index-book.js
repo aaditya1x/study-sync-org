@@ -1,16 +1,19 @@
 
-import { createClient } from 
-"@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import { PDFParse } from "pdf-parse";
 
 const supabaseUrl =
   process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 
 const anonKey =
+  process.env.SUPABASE_PUBLISHABLE_KEY ||
   process.env.SUPABASE_ANON_KEY ||
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   process.env.VITE_SUPABASE_ANON_KEY;
 
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const serviceKey =
+  process.env.SUPABASE_SECRET_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const authClient =
   supabaseUrl && anonKey
@@ -142,7 +145,7 @@ export default async function handler(req, res) {
 
     if (file.size > 50 * 1024 * 1024) {
       return res.status(413).json({
-        error: "PDF exceeds the 10 MB indexing limit.",
+        error: "PDF exceeds the 50 MB indexing limit.",
       });
     }
 
@@ -155,23 +158,19 @@ export default async function handler(req, res) {
     }
 
 
-const pages = [];
+    const parser = new PDFParse({ data: buffer });
+    let parsed;
+    try {
+      parsed = await parser.getText();
+    } finally {
+      await parser.destroy();
+    }
 
-const result = await pdf(buffer);
-
-const pageCount = result.numpages || 1;
-const fullText = result.text || "";
-
-const pageTexts = fullText.split(/\f/);
-
-for (let i = 0; i < pageCount; i++) {
-  pages.push((pageTexts[i] || "").trim());
-}
-
-
-if (pages.every((page) => !page) && fullText.trim()) {
-  pages[0] = fullText.trim();
-}
+    const pages = (parsed.pages || []).map((page) => page.text.trim());
+    const fullText = parsed.text || "";
+    if (pages.every((page) => !page) && fullText.trim()) {
+      pages.push(fullText.trim());
+    }
 
 
     const rows = [];
@@ -212,6 +211,14 @@ if (pages.every((page) => !page) && fullText.trim()) {
 
       if (insertError) throw insertError;
     }
+
+    const { error: updateError } = await admin
+      .from("study_materials")
+      .update({ is_indexed: true })
+      .eq("user_id", user.id)
+      .eq("storage_path", storage_path);
+
+    if (updateError) throw updateError;
 
     return res.status(200).json({
       success: true,

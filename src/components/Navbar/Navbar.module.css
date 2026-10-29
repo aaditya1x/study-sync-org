@@ -4,21 +4,30 @@
 .breadcrumb span { padding:0 7px; color:var(--line); }
 .breadcrumb strong { color:var(--text); font-weight:750; }
 .search { width:min(22vw,230px); display:flex; align-items:center; gap:8px; padding:10px 12px; background:var(--surface); border:1px solid var(--line); border-radius:11px; color:var(--muted); }
+.searchWrap { position:relative; }
+.search:focus-within { border-color:var(--primary); box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 13%,transparent); }
+.searchResults { position:absolute; z-index:30; top:calc(100% + 7px); left:0; width:min(330px,calc(100vw - 28px)); max-height:min(360px,60vh); overflow:auto; padding:6px; border:1px solid var(--line); border-radius:12px; background:var(--surface); box-shadow:var(--shadow); }
+.searchResult,.searchResultActive { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:10px; border:0; border-radius:8px; background:transparent; color:var(--text); text-align:left; cursor:pointer; }
+.searchResultActive,.searchResult:hover { background:var(--surface-soft); }
+.searchResult span,.searchResultActive span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:700; }
+.searchResult small,.searchResultActive small { flex:none; color:var(--muted); font-size:10px; }
+.noResults { margin:0; padding:12px 10px; color:var(--muted); font-size:11px; }
 .search input { width:100%; min-width:0; background:transparent; border:0; outline:0; color:var(--text); font-size:12px; }
-.iconButton,.menu { position:relative; display:grid; place-items:center; width:37px; height:37px; border:1px solid var(--line); border-radius:11px; color:var(--muted); background:var(--surface); }
-.iconButton i { position:absolute; top:7px; right:8px; width:6px; height:6px; background:#f28d67; border-radius:50%; }
+.menu { position:relative; display:grid; place-items:center; width:37px; height:37px; border:1px solid var(--line); border-radius:11px; color:var(--muted); background:var(--surface); }
 .avatarButton { position:relative; width:36px; height:36px; flex:none; display:grid; place-items:center; padding:0; overflow:visible; border:0; border-radius:50%; background:#ffe6d9; color:#94572c; font-size:12px; font-weight:850; }
 .avatarButton img { width:36px; height:36px; display:block; object-fit:cover; border-radius:50%; }
 .camera { position:absolute; right:-3px; bottom:-2px; width:16px; height:16px; display:grid; place-items:center; border:2px solid var(--surface); border-radius:50%; color:white; background:var(--primary); }
 .menu { display:none; }
 @media(max-width:800px) { .menu { display:grid; } .header { margin-bottom:23px; } }
-@media(max-width:560px) { .breadcrumb { font-size:10px; } .search { width:38px; padding:10px; } .search:focus-within { width:140px; } .search input { width:0; } .search:focus-within input { width:100%; } .iconButton { display:none; } .actions { gap:7px; } }
+@media(max-width:560px) { .header { gap:8px; margin-bottom:20px; } .breadcrumb { overflow:hidden; font-size:10px; text-overflow:ellipsis; } .search { width:38px; flex:none; padding:10px; } .search:focus-within { position:absolute; z-index:2; right:12px; width:min(210px,calc(100vw - 24px)); box-shadow:var(--shadow); } .search input { width:0; } .search:focus-within input { width:100%; } .actions { flex:none; gap:6px; } }
 
 .username { max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:11px; font-weight:700; }
 .logout { display:flex; align-items:center; gap:6px; padding:9px 10px; border:1px solid var(--line); border-radius:10px; color:var(--muted); background:var(--surface); font-size:11px; font-weight:750; white-space:nowrap; }
 .logout:hover { color:#dc4c4c; border-color:#ffd5cd; background:#fff7f5; }
 @media(max-width:900px) { .username { display:none; } .logout span { display:none; } .logout { width:36px;height:36px;justify-content:center;padding:0; } }
 @media(max-width:560px) { .actions { gap:5px; } .logout { display:flex; } }
+@media(max-width:420px) { .workspaceLabel,.separator { display:none; } }
+@media(max-width:380px) { .search { display:none; } .actions { gap:5px; } .avatarButton,.logout { width:34px; height:34px; } }
 
 .menu { flex:none; transition:background .18s ease,color .18s ease; }
 .menu:hover { color:var(--primary); background:var(--primary-soft); }

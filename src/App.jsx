@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   BookOpen,
@@ -6,6 +6,7 @@ import {
   ChartNoAxesCombined,
   CheckSquare,
   FileText,
+  GraduationCap,
   LayoutDashboard,
   Settings2,
 } from "lucide-react";
@@ -16,6 +17,7 @@ import { Sidebar } from "./components/Sidebar/index.js";
 import { StatCard } from "./components/StatCard/index.js";
 import { CourseLibrary } from "./components/CourseLibrary/index.js";
 import { MaterialsPanel } from "./components/MaterialsPanel/index.js";
+import { SyllabusLibrary } from "./components/SyllabusLibrary/index.js";
 import { TasksPanel } from "./components/TasksPanel/index.js";
 import { AIStudyTools } from "./components/AIStudyTools/index.js";
 import { ProgressReport } from "./components/ProgressReport/index.js";
@@ -24,7 +26,7 @@ import { Toast } from "./components/Toast/index.js";
 import { Login } from "./components/Login/index.js";
 
 import { usePersistentState } from "./hooks/usePersistentState.js";
-import { supabase } from "./lib/supabase.js";
+import { supabase, STORAGE_BUCKETS } from "./lib/supabase.js";
 import {
   initialCourses,
   initialMaterials,
@@ -33,73 +35,155 @@ import {
 
 import styles from "./App.module.css";
 
-const SESSION_KEY = "campusflow-auth-session";
-
 const navItems = [
   { id: "Dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "Courses", label: "Courses", icon: BookOpen },
   { id: "Materials", label: "Study Materials", icon: FileText },
+  { id: "Syllabus", label: "Syllabus Library", icon: GraduationCap },
   { id: "Tasks", label: "Tasks & Assignments", icon: CheckSquare },
   { id: "AI Tools", label: "AI Study Tools", icon: BrainCircuit },
   { id: "Progress", label: "Progress Report", icon: ChartNoAxesCombined },
   { id: "Settings", label: "Settings", icon: Settings2 },
 ];
 
-function readSession() {
-  try {
-    const value = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
-
-    return value?.authenticated === true &&
-      typeof value.username === "string" &&
-      value.username.trim()
-      ? {
-          authenticated: true,
-          username: value.username,
-        }
-      : null;
-  } catch {
-    return null;
-  }
+function makeSession(user) {
+  if (!user) return null;
+  return {
+    authenticated: true,
+    userId: user.id,
+    username:
+      user.user_metadata?.username ||
+      user.user_metadata?.full_name ||
+      user.email?.split("@")[0] ||
+      "Student",
+  };
 }
 
 export default function App() {
-  const [session, setSession] = useState(readSession);
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [active, setActive] = useState("Dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [selectedCourseId, setSelectedCourseId] = useState("");
+  const [createCourseRequested, setCreateCourseRequested] = useState(false);
+  const [uploadMaterialRequest, setUploadMaterialRequest] = useState({ open: false, courseId: "" });
+  const [courseLoadStatus, setCourseLoadStatus] = useState("loading");
+  const [materialLoadStatus, setMaterialLoadStatus] = useState("loading");
+
+  const userStoragePrefix = session?.userId
+    ? `campusflow-${session.userId}`
+    : "campusflow-guest";
 
   const [courses, setCourses] = usePersistentState(
-    "campusflow-courses",
+    `${userStoragePrefix}-courses`,
     initialCourses,
   );
 
   const [materials, setMaterials] = usePersistentState(
-    "campusflow-materials",
+    `${userStoragePrefix}-materials`,
     initialMaterials,
   );
 
   const [tasks, setTasks] = usePersistentState(
-    "campusflow-tasks",
+    `${userStoragePrefix}-tasks`,
     initialTasks,
   );
 
   const [toast, setToast] = useState("");
-  const [cloudReady, setCloudReady] = useState(false);
+  const [cloudReadyUserId, setCloudReadyUserId] = useState(null);
+  const [taskSyncStatus, setTaskSyncStatus] = useState("checking");
+  const [taskSyncError, setTaskSyncError] = useState("");
+  const taskSaveQueue = useRef(Promise.resolve());
+  const taskSaveVersion = useRef(0);
 
   const [profilePicture, setProfilePicture] = useState("");
+
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false);
+      return undefined;
+    }
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, authSession) => {
+      setSession(makeSession(authSession?.user));
+      setAuthLoading(false);
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    setProfilePicture("");
+    if (!supabase || !session?.userId) return undefined;
+
+    let active = true;
+    let refreshing = false;
+
+    async function refreshProfilePicture() {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error || !data.user || data.user.id !== session.userId) return;
+        const path = data.user.user_metadata?.avatar_path;
+        if (!path) {
+          if (active) setProfilePicture("");
+          return;
+        }
+
+        const { data: signedData, error: signedError } = await supabase.storage
+          .from(STORAGE_BUCKETS.profiles)
+          .createSignedUrl(path, 3600);
+        if (!signedError && active) setProfilePicture(signedData.signedUrl);
+      } catch (error) {
+        console.error("Could not refresh profile photo:", error);
+      } finally {
+        refreshing = false;
+      }
+    }
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshProfilePicture();
+    };
+
+    refreshProfilePicture();
+    const refreshTimer = window.setInterval(refreshProfilePicture, 50 * 60 * 1000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      active = false;
+      window.clearInterval(refreshTimer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [session?.userId]);
 
   useEffect(() => {
   let cancelled = false;
 
   async function loadCloudData() {
-    setCloudReady(false);
+    setCloudReadyUserId(null);
 
-    if (!session?.authenticated || !supabase) return;
+    if (!session?.authenticated || !supabase) {
+      setTaskSyncStatus("local");
+      return;
+    }
+
+    setTaskSyncStatus("checking");
+    setTaskSyncError("");
 
     try {
       const { data: authData, error: authError } =
         await supabase.auth.getUser();
 
-      if (authError || !authData.user) {
+      if (
+        authError ||
+        !authData.user ||
+        authData.user.id !== session.userId
+      ) {
+        setTaskSyncStatus("error");
+        setTaskSyncError("Your session is no longer valid. Sign in again to sync.");
         notify("Please log in again to sync your data.");
         return;
       }
@@ -112,24 +196,21 @@ export default function App() {
       if (error) throw error;
       if (cancelled) return;
 
-      const savedTasks = data.find(
+      const savedTasks = (data || []).find(
         (item) => item.data_key === "tasks"
       );
-      const savedCourses = data.find(
-        (item) => item.data_key === "courses"
-      );
-
       if (savedTasks && Array.isArray(savedTasks.data)) {
         setTasks(savedTasks.data);
       }
 
-      if (savedCourses && Array.isArray(savedCourses.data)) {
-        setCourses(savedCourses.data);
-      }
-
-      setCloudReady(true);
+      setCloudReadyUserId(authData.user.id);
+      setTaskSyncStatus(savedTasks ? "synced" : "saving");
     } catch (error) {
       console.error("Cloud data loading failed:", error);
+      if (!cancelled) {
+        setTaskSyncStatus("error");
+        setTaskSyncError(error.message || "Could not load tasks from Supabase.");
+      }
       if (!cancelled) notify("Could not load saved data.");
     }
   }
@@ -139,48 +220,60 @@ export default function App() {
   return () => {
     cancelled = true;
   };
-}, [session?.authenticated]);
+}, [session?.userId]);
 
 useEffect(() => {
-  if (!cloudReady || !session?.authenticated || !supabase) return;
+  if (
+    !session?.userId ||
+    cloudReadyUserId !== session.userId ||
+    !supabase
+  ) return;
 
   let cancelled = false;
+  const version = ++taskSaveVersion.current;
+  const taskSnapshot = tasks;
 
   async function saveCloudData() {
     try {
-      const { data: authData, error: authError } =
-        await supabase.auth.getUser();
+      const previousSave = taskSaveQueue.current.catch(() => {});
+      const currentSave = previousSave.then(async () => {
+        if (cancelled) return;
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+        if (!authData.user || authData.user.id !== session.userId) {
+          throw new Error("Your session changed before tasks could sync.");
+        }
 
-      if (authError || !authData.user) return;
-
-      const userId = authData.user.id;
-
-      const updates = [
-        { user_id: userId, data_key: "tasks", data: tasks },
-        { user_id: userId, data_key: "courses", data: courses },
-      ];
-
-      for (const item of updates) {
         const { error } = await supabase
           .from("user_app_data")
-          .upsert(item, {
-            onConflict: "user_id,data_key",
-          });
-
+          .upsert(
+            { user_id: authData.user.id, data_key: "tasks", data: taskSnapshot },
+            { onConflict: "user_id,data_key" },
+          );
         if (error) throw error;
+      });
+      taskSaveQueue.current = currentSave;
+      await currentSave;
+      if (!cancelled && version === taskSaveVersion.current) {
+        setTaskSyncStatus("synced");
+        setTaskSyncError("");
       }
     } catch (error) {
       console.error("Cloud data saving failed:", error);
-      if (!cancelled) notify("Data could not sync to the cloud.");
+      if (!cancelled && version === taskSaveVersion.current) {
+        setTaskSyncStatus("error");
+        setTaskSyncError(error.message || "Supabase rejected the task update.");
+      }
     }
   }
 
+  setTaskSyncStatus("saving");
   saveCloudData();
 
   return () => {
     cancelled = true;
   };
-}, [tasks, courses, cloudReady, session?.authenticated]);
+}, [tasks, cloudReadyUserId, session?.userId]);
 
   const [query, setQuery] = useState("");
 
@@ -199,54 +292,34 @@ useEffect(() => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!mobileNavOpen) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setMobileNavOpen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mobileNavOpen]);
+
   const doneTasks = tasks.filter((task) => task.completed).length;
-  const materialCount = materials.length;
-
-  const courseHours = useMemo(
-    () =>
-      (
-        courses.reduce(
-          (sum, course) => sum + (Number(course.progress) || 0),
-          0,
-        ) /
-        Math.max(courses.length, 1) /
-        5
-      ).toFixed(1),
-    [courses],
-  );
-
-  function notify(message) {
+  const pendingTasks = tasks.length - doneTasks;
+  const studyProgress = tasks.length ? Math.round((doneTasks / tasks.length) * 100) : 0;
+  const notify = useCallback((message) => {
     setToast(message);
     window.clearTimeout(notify.timer);
 
     notify.timer = window.setTimeout(() => {
       setToast("");
     }, 2800);
-  }
+  }, []);
 
   function handleLogin(user) {
-    // Supabase Auth login user ko callback se deta hai.
-    // Password kabhi localStorage mein store nahi hota.
-    const username =
-      user?.user_metadata?.username ||
-      user?.user_metadata?.full_name ||
-      user?.email?.split("@")[0] ||
-      "Student";
-
-    const nextSession = {
-      authenticated: true,
-      username,
-      createdAt: new Date().toISOString(),
-    };
-
-    try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
-
-      setSession(nextSession);
-      setActive("Dashboard");
-    } catch {
-      notify("Browser storage is unavailable.");
-    }
+    setSession(makeSession(user));
+    setActive("Dashboard");
   }
 
 async function handleLogout() {
@@ -255,17 +328,17 @@ async function handleLogout() {
       const { error } = await supabase.auth.signOut();
 
       if (error) {
-        console.error("Logout failed:", error);
+        notify(`Could not log out: ${error.message}`);
+        return;
       }
     }
-
-    localStorage.removeItem(SESSION_KEY);
-  } catch (error) {
-    console.error("Logout error:", error);
-  } finally {
     setSession(null);
+    setProfilePicture("");
     setActive("Dashboard");
     setQuery("");
+  } catch (error) {
+    console.error("Logout error:", error);
+    notify("Could not log out. Please try again.");
   }
 }
 
@@ -275,6 +348,63 @@ async function handleLogout() {
     setMobileNavOpen(false);
   }
 
+  const openCourse = useCallback((courseId) => {
+    setSelectedCourseId(courseId || "");
+    setActive("Courses");
+  }, []);
+
+  const requestUpload = useCallback((courseId = "") => {
+    setUploadMaterialRequest({ open: true, courseId: courseId || "" });
+    setQuery("");
+    setActive("Materials");
+  }, []);
+
+  const clearUploadRequest = useCallback(() => {
+    setUploadMaterialRequest((current) => ({ ...current, open: false }));
+  }, []);
+
+  const clearCourseRequest = useCallback(() => setCreateCourseRequested(false), []);
+
+  const recentActivity = useMemo(() => [
+    ...materials.map((item) => ({
+      id: `material-${item.id || item.path || item.name}`,
+      label: `Uploaded ${item.name}`,
+      date: item.addedAt || item.created_at,
+      action: () => setActive("Materials"),
+    })),
+    ...courses.map((item) => ({
+      id: `course-${item.id}`,
+      label: `Added ${item.name || item.title || "a course"}`,
+      date: item.created_at,
+      action: () => openCourse(item.id),
+    })),
+    ...tasks.map((item) => ({
+      id: `task-${item.id}`,
+      label: item.completed ? `Completed ${item.title}` : `Added ${item.title}`,
+      date: item.completedAt || item.createdAt,
+      action: () => setActive("Tasks"),
+    })),
+  ].filter((item) => item.date).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5), [materials, courses, tasks, openCourse]);
+
+  const searchResults = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (term.length < 2) return [];
+    return [
+      ...courses.filter((item) => `${item.name || item.title} ${item.code || item.course_code || ""}`.toLowerCase().includes(term))
+        .map((item) => ({ id: `course-${item.id}`, label: item.name || item.title, detail: "Course", section: "Courses", courseId: item.id })),
+      ...materials.filter((item) => `${item.name} ${item.subject || ""}`.toLowerCase().includes(term))
+        .map((item) => ({ id: `material-${item.id || item.path}`, label: item.name, detail: "Study material", section: "Materials" })),
+      ...tasks.filter((item) => `${item.title} ${item.description || ""}`.toLowerCase().includes(term))
+        .map((item) => ({ id: `task-${item.id}`, label: item.title, detail: item.completed ? "Completed task" : "Task", section: "Tasks" })),
+    ].slice(0, 8);
+  }, [query, courses, materials, tasks]);
+
+  const selectSearchResult = useCallback((result) => {
+    if (result.courseId) setSelectedCourseId(result.courseId);
+    setActive(result.section);
+    setMobileNavOpen(false);
+  }, []);
+
   const shared = {
     courses,
     setCourses,
@@ -282,13 +412,22 @@ async function handleLogout() {
     setMaterials,
     tasks,
     setTasks,
+    taskSyncStatus,
+    taskSyncError,
     notify,
     query,
     setQuery,
+    onQueryChange: setQuery,
     setActive,
+    onLoadStatusChange: setMaterialLoadStatus,
+    onCourseLoadStatusChange: setCourseLoadStatus,
   };
 
   const title = navItems.find((item) => item.id === active)?.label || active;
+
+  if (authLoading) {
+    return <main className={styles.loading} aria-live="polite">Loading your workspace…</main>;
+  }
 
   if (!session?.authenticated) {
     return <Login onLogin={handleLogin} />;
@@ -318,10 +457,12 @@ async function handleLogout() {
           title={title}
           query={query}
           onQueryChange={setQuery}
+          searchResults={searchResults}
+          onSelectSearchResult={selectSearchResult}
           onMenu={() => setMobileNavOpen((open) => !open)}
           mobileNavOpen={mobileNavOpen}
           profilePicture={profilePicture}
-          onProfilePictureChange={setProfilePicture}
+          onOpenSettings={() => setActive("Settings")}
           notify={notify}
           username={session.username}
           onLogout={handleLogout}
@@ -343,48 +484,63 @@ async function handleLogout() {
 
               <button
                 className={styles.primaryButton}
-                onClick={() => setActive("Courses")}
+                onClick={() => { setCreateCourseRequested(true); setActive("Courses"); }}
               >
                 ＋ Add a course
               </button>
             </section>
 
-            <section className={styles.stats}>
+            <section className={styles.stats} aria-label="Study overview">
               <StatCard
                 label="Enrolled courses"
-                value={courses.length}
-                note="Across your semesters"
+                value={courseLoadStatus === "loading" ? "…" : courseLoadStatus === "error" ? "—" : courses.length}
+                note={courseLoadStatus === "error" ? "Could not load courses" : "Your active courses"}
                 icon={BookOpen}
                 tint="purple"
+                onClick={() => setActive("Courses")}
               />
-
               <StatCard
-                label="Study progress"
-                value={`${courseHours} hrs`}
-                note="Estimated learning progress"
-                icon={ChartNoAxesCombined}
-                tint="green"
-              />
-
-              <StatCard
-                label="Materials saved"
-                value={materialCount}
-                note="In your study library"
+                label="Study materials"
+                value={materialLoadStatus === "loading" ? "…" : materialLoadStatus === "error" ? "—" : materials.length}
+                note={materialLoadStatus === "error" ? "Could not load materials" : "Files in your library"}
                 icon={FileText}
                 tint="blue"
+                onClick={() => setActive("Materials")}
               />
-
               <StatCard
-                label="Tasks completed"
-                value={`${doneTasks}/${tasks.length}`}
-                note="Keep your momentum"
+                label="Pending tasks"
+                value={pendingTasks}
+                note="Assignments and study goals"
                 icon={CheckSquare}
                 tint="orange"
+                onClick={() => setActive("Tasks")}
+              />
+              <StatCard
+                label="Tasks completed"
+                value={doneTasks}
+                note={`Out of ${tasks.length} tasks`}
+                icon={CheckSquare}
+                tint="green"
+                onClick={() => setActive("Tasks")}
+              />
+              <StatCard
+                label="Study progress"
+                value={`${studyProgress}%`}
+                note={tasks.length ? "Based on completed tasks" : "Add a task to start tracking"}
+                icon={ChartNoAxesCombined}
+                tint="purple"
+                onClick={() => setActive("Progress")}
               />
             </section>
 
             <div className={styles.dashboardGrid}>
-              <CourseLibrary {...shared} compact />
+              <CourseLibrary
+                {...shared}
+                compact
+                onOpenCourse={openCourse}
+                onViewAll={() => setActive("Courses")}
+                onCourseLoadStatusChange={setCourseLoadStatus}
+              />
 
               <div className={styles.rightColumn}>
                 <div className={styles.aiBanner}>
@@ -399,20 +555,55 @@ async function handleLogout() {
                   </button>
                 </div>
 
-                <TasksPanel {...shared} compact />
-                <MaterialsPanel {...shared} compact />
+                <div className={styles.quickActions} aria-label="Quick actions">
+                  <button type="button" onClick={() => { setCreateCourseRequested(true); setActive("Courses"); }}>Create course</button>
+                  <button type="button" onClick={() => requestUpload()}>Upload material</button>
+                  <button type="button" onClick={() => setActive("Tasks")}>View assignments</button>
+                </div>
+
+                <TasksPanel {...shared} compact onViewAll={() => setActive("Tasks")} />
+                <MaterialsPanel {...shared} compact onOpenCourses={() => setActive("Materials")} />
+
+                <section className={styles.activity} aria-labelledby="activity-title">
+                  <div className={styles.activityHeading}><div><h2 id="activity-title">Recent activity</h2><p>Updates from your workspace</p></div></div>
+                  {recentActivity.length ? <ul>{recentActivity.map((item) => <li key={item.id}><button type="button" onClick={item.action}><span>{item.label}</span><time dateTime={item.date}>{new Date(item.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time></button></li>)}</ul> : <p className={styles.activityEmpty}>Your course and material updates will appear here.</p>}
+                </section>
               </div>
             </div>
           </>
         )}
 
-        {active === "Courses" && <CourseLibrary {...shared} />}
+        {active === "Courses" && <CourseLibrary
+          {...shared}
+          materials={materials}
+          initialSelectedCourseId={selectedCourseId}
+          onUploadMaterial={requestUpload}
+          autoOpenCreate={createCourseRequested}
+          onCreateFormOpened={clearCourseRequest}
+          onCourseLoadStatusChange={setCourseLoadStatus}
+        />}
 
-        {active === "Materials" && <MaterialsPanel {...shared} />}
+        {active === "Materials" && <MaterialsPanel
+          {...shared}
+          courses={courses}
+          setCourses={setCourses}
+          initialCourseId={uploadMaterialRequest.courseId}
+          autoOpenUpload={uploadMaterialRequest.open}
+          onUploadFormOpened={clearUploadRequest}
+          onOpenCourses={() => { setCreateCourseRequested(true); setActive("Courses"); }}
+        />}
+
+        {active === "Syllabus" && <SyllabusLibrary query={query} />}
 
         {active === "Tasks" && <TasksPanel {...shared} />}
 
-        {active === "AI Tools" && <AIStudyTools notify={notify} />}
+        {active === "AI Tools" && (
+          <AIStudyTools
+            materials={materials}
+            notify={notify}
+            onOpenMaterials={() => setActive("Materials")}
+          />
+        )}
 
         {active === "Progress" && (
           <ProgressReport
@@ -425,6 +616,7 @@ async function handleLogout() {
         {active === "Settings" && (
           <SettingsPanel
             notify={notify}
+            username={session.username}
             profilePicture={profilePicture}
             onProfilePictureChange={setProfilePicture}
           />

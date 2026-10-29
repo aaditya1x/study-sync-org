@@ -1,5 +1,7 @@
 .card { padding:18px; border:1px solid var(--line); border-radius:16px; background:var(--surface); box-shadow:var(--shadow); min-width:0; transition:transform .18s,border-color .18s; }
-.card:hover { transform:translateY(-2px); border-color:color-mix(in srgb,var(--primary) 35%,var(--line)); }
+.interactive { display:block; width:100%; color:var(--text); text-align:left; font:inherit; cursor:pointer; }
+.card:hover,.interactive:focus-visible { transform:translateY(-2px); border-color:color-mix(in srgb,var(--primary) 35%,var(--line)); }
+.interactive:focus-visible { outline:3px solid color-mix(in srgb,var(--primary) 45%,transparent); outline-offset:2px; }
 .top { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--muted); font-size:11px; font-weight:700; }
 .icon { width:35px; height:35px; flex:none; display:grid; place-items:center; border-radius:11px; }
 .purple { color:#6c5ce7; background:#f0eeff; } .green { color:#209b75; background:#e3f8f0; } .blue { color:#3f7fe8; background:#e7f0ff; } .orange { color:#b96b2e; background:#fff0e5; }

@@ -11,7 +11,11 @@ export default function ProgressReport({courses,tasks,materials}) {
     : completedTasks === totalTasks
       ? 100
       : Math.round((completedTasks / totalTasks) * 100);
-  const average=courses.length?Math.round(courses.reduce((s,c)=>s+c.progress,0)/courses.length):0;
+  const courseProgress = courses.map((course) => {
+    const linked = tasks.filter((task) => String(task.courseId || "") === String(course.id));
+    return { ...course, taskCount: linked.length, actualProgress: linked.length ? Math.round(linked.filter((task) => task.completed).length / linked.length * 100) : 0 };
+  });
+  const average=courseProgress.length?Math.round(courseProgress.reduce((sum,course)=>sum+course.actualProgress,0)/courseProgress.length):0;
 
   return <section className={styles.page}>
     <div className={styles.heading}><p>YOUR GROWTH</p><h1>Progress report</h1><span>Review your course progress and task completion.</span></div>
@@ -25,6 +29,6 @@ export default function ProgressReport({courses,tasks,materials}) {
       <div className={styles.taskProgressHeading}><div><h2>Overall task completion</h2><p>{totalTasks===0?"Add a task to start tracking progress.":taskProgress===100?"Excellent — every task is complete!":"Keep going; every completed task moves you forward."}</p></div><strong>{taskProgress}%</strong></div>
       <div className={styles.taskProgressTrack} role="progressbar" aria-label="Overall task completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={taskProgress}><span style={{width:`${taskProgress}%`}}/></div>
     </div>
-    <div className={styles.panel}><h2>Course completion</h2><p>Progress is based on each course's saved progress percentage.</p>{courses.map(c=><div className={styles.course} key={c.id}><div className={styles.courseHead}><strong>{c.name}</strong><b>{c.progress}%</b></div><div className={styles.track} role="progressbar" aria-label={`${c.name} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={c.progress}><span style={{width:`${Math.min(100,Math.max(0,c.progress))}%`}}/></div><small>{c.code} · Semester {c.semester}</small></div>)}</div>
+    <div className={styles.panel}><h2>Course completion</h2><p>Each percentage uses this course’s assigned tasks; courses without tasks start at 0%.</p>{courseProgress.map(c=><div className={styles.course} key={c.id}><div className={styles.courseHead}><strong>{c.name}</strong><b>{c.actualProgress}%</b></div><div className={styles.track} role="progressbar" aria-label={`${c.name} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={c.actualProgress}><span style={{width:`${Math.min(100,Math.max(0,c.actualProgress))}%`}}/></div><small>{c.code} · Semester {c.semester} · {c.taskCount} linked tasks</small></div>)}</div>
   </section>;
 }
