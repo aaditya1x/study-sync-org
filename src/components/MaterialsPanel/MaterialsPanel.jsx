@@ -95,7 +95,6 @@ export default function MaterialsPanel({
   const [loading, setLoading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [file, setFile] = useState(null);
-  const [uploadId, setUploadId] = useState("");
   const [courseId, setCourseId] = useState(initialCourseId || "");
   const [uploading, setUploading] = useState(false);
   const [uploadStage, setUploadStage] = useState("");
@@ -262,7 +261,6 @@ export default function MaterialsPanel({
       return;
     }
     setFile(nextFile);
-    setUploadId(crypto.randomUUID());
     setUploadAttempt(0);
     setUploadError("");
   }
@@ -271,7 +269,6 @@ export default function MaterialsPanel({
     if (uploading) return;
     setUploadOpen(false);
     setFile(null);
-    setUploadId("");
     setUploadError("");
     setCreatingCourse(false);
     if (inputRef.current) inputRef.current.value = "";
@@ -354,7 +351,10 @@ export default function MaterialsPanel({
       if (authError) throw authError;
       if (!authData.user) throw new Error("Please sign in again before uploading.");
 
-      const path = `${authData.user.id}/${uploadId}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      // Give every submission a fresh object path. If a previous request
+      // reached Storage but its response was lost, retrying must not upsert an
+      // object that has no metadata row yet (shared-file SELECT requires one).
+      const path = `${authData.user.id}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
       uploadedPath = path;
       const { data: existing, error: existingError } = await supabase
         .from("study_materials")
@@ -374,7 +374,7 @@ export default function MaterialsPanel({
         setUploadStage("Uploading file to the shared study library…");
         const { data: uploaded, error: storageError } = await supabase.storage
           .from(BUCKET)
-          .upload(path, file, { contentType: file.type || "application/octet-stream", upsert: true });
+          .upload(path, file, { contentType: file.type || "application/octet-stream", upsert: false });
         if (storageError) throw new Error(storageErrorMessage(storageError));
         uploadedPath = uploaded.path;
         uploadedByThisAttempt = true;
@@ -423,7 +423,6 @@ export default function MaterialsPanel({
         : `${file.name} uploaded to shared study materials.`);
       setUploadOpen(false);
       setFile(null);
-      setUploadId("");
 
       if (fileExtension(file) === "pdf") {
         await indexMaterial(mapped);
