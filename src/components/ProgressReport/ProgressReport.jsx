@@ -21,9 +21,9 @@ export default function ProgressReport({courses,tasks,materials}) {
     <div className={styles.heading}><p>YOUR GROWTH</p><h1>Progress report</h1><span>Review your course progress and task completion.</span></div>
     <div className={styles.stats}>
       <StatCard label="Task completion" value={`${taskProgress}%`} note={`${completedTasks} of ${totalTasks} tasks completed`} icon={ListTodo} tint="purple"/>
-      <StatCard label="Average course progress" value={`${average}%`} note="Across all enrolled courses" icon={ChartNoAxesCombined} tint="green"/>
-      <StatCard label="Courses enrolled" value={courses.length} note="Current learning library" icon={BookOpen} tint="blue"/>
-      <StatCard label="Materials saved" value={materials.length} note="Study reference files" icon={FileText} tint="orange"/>
+      <StatCard label="Average course progress" value={`${average}%`} note="Across shared courses using your tasks" icon={ChartNoAxesCombined} tint="green"/>
+      <StatCard label="Available courses" value={courses.length} note="College study library" icon={BookOpen} tint="blue"/>
+      <StatCard label="Materials available" value={materials.length} note="Shared files and your private uploads" icon={FileText} tint="orange"/>
     </div>
     <div className={styles.panel}>
       <div className={styles.taskProgressHeading}><div><h2>Overall task completion</h2><p>{totalTasks===0?"Add a task to start tracking progress.":taskProgress===100?"Excellent — every task is complete!":"Keep going; every completed task moves you forward."}</p></div><strong>{taskProgress}%</strong></div>

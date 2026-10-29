@@ -50,6 +50,30 @@
   line-height: 1.55;
 }
 
+.academicSection { display:grid; gap:14px; }
+.sectionHeading { display:flex; align-items:end; justify-content:space-between; gap:12px; }
+.sectionHeading h2 { margin:0; color:var(--text-primary,#202438); font-size:18px; }
+.sectionHeading p { margin:4px 0 0; color:var(--text-secondary,#73788b); font-size:12px; }
+.courseList { display:grid; gap:12px; }
+.courseCard { min-width:0; padding:16px; border:1px solid var(--border,#e7e8ee); border-radius:16px; background:var(--surface,#fff); }
+.courseHead { display:flex; align-items:start; justify-content:space-between; gap:12px; }
+.courseHead span { color:var(--accent,#7257d8); font-size:10px; font-weight:800; letter-spacing:.08em; }
+.courseHead h3 { margin:5px 0 0; color:var(--text-primary,#202438); font-size:16px; }
+.courseHead strong { flex:0 0 auto; padding:5px 8px; border-radius:99px; color:var(--text-secondary,#73788b); background:var(--surface-soft,#f4f3fa); font-size:11px; }
+.courseDescription { margin:10px 0 0; color:var(--text-secondary,#62677b); font-size:13px; line-height:1.5; }
+.courseFiles { margin-top:14px; }
+.courseFiles h4,.unassigned h3 { margin:0 0 8px; color:var(--text-primary,#202438); font-size:12px; }
+.courseFiles > p { margin:0; color:var(--text-secondary,#73788b); font-size:12px; }
+.courseFiles ul,.unassigned ul { display:grid; gap:7px; margin:0; padding:0; list-style:none; }
+.file { display:flex; min-width:0; align-items:center; gap:9px; padding:9px 10px; border:1px solid var(--border,#e7e8ee); border-radius:11px; color:var(--accent,#7257d8); }
+.fileDetails { display:grid; min-width:0; flex:1; gap:3px; }
+.fileDetails strong { overflow:hidden; color:var(--text-primary,#202438); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.fileDetails small { color:var(--text-secondary,#73788b); font-size:10px; }
+.file a { display:inline-flex; align-items:center; gap:5px; flex:0 0 auto; color:var(--accent,#7257d8); font-size:11px; font-weight:800; text-decoration:none; }
+.unassigned { padding:14px; border:1px dashed var(--border,#d8dae3); border-radius:14px; background:var(--surface,#fff); }
+.loading { margin:0; color:var(--text-secondary,#73788b); font-size:13px; }
+.loadError { margin:0; padding:10px 12px; border-radius:10px; color:#a43d3d; background:color-mix(in srgb,#e45c5c 9%,var(--surface,#fff)); font-size:12px; }
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));

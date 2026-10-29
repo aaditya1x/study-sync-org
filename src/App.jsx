@@ -494,9 +494,9 @@ async function handleLogout() {
 
             <section className={styles.stats} aria-label="Study overview">
               <StatCard
-                label="Enrolled courses"
+                label="Available courses"
                 value={courseLoadStatus === "loading" ? "…" : courseLoadStatus === "error" ? "—" : courses.length}
-                note={courseLoadStatus === "error" ? "Could not load courses" : "Your active courses"}
+                note={courseLoadStatus === "error" ? "Could not load courses" : "Shared college library"}
                 icon={BookOpen}
                 tint="purple"
                 onClick={() => setActive("Courses")}
@@ -504,7 +504,7 @@ async function handleLogout() {
               <StatCard
                 label="Study materials"
                 value={materialLoadStatus === "loading" ? "…" : materialLoadStatus === "error" ? "—" : materials.length}
-                note={materialLoadStatus === "error" ? "Could not load materials" : "Files in your library"}
+                note={materialLoadStatus === "error" ? "Could not load materials" : "Shared files and your private uploads"}
                 icon={FileText}
                 tint="blue"
                 onClick={() => setActive("Materials")}
@@ -595,7 +595,14 @@ async function handleLogout() {
           onOpenCourses={() => { setCreateCourseRequested(true); setActive("Courses"); }}
         />}
 
-        {active === "Syllabus" && <SyllabusLibrary query={query} />}
+        {active === "Syllabus" && <SyllabusLibrary
+          query={query}
+          courses={courses}
+          materials={materials}
+          loading={courseLoadStatus === "loading" || materialLoadStatus === "loading"}
+          coursesStatus={courseLoadStatus}
+          materialsStatus={materialLoadStatus}
+        />}
 
         {active === "Tasks" && <TasksPanel {...shared} />}
 

@@ -16,7 +16,7 @@ function storageErrorMessage(error) {
     return `Storage bucket "${BUCKET}" is missing. Review and manually run the existing-project repair migration.`;
   }
   if (error?.code === "42501" || /row-level security|permission denied/i.test(error?.message || "")) {
-    return "Supabase denied this action. Check that you are signed in and that the owner-folder Storage policy is installed.";
+    return "Supabase denied this action. Check that you are signed in and that the study-material sharing policies are installed.";
   }
   return error?.message || "Storage request failed.";
 }
@@ -52,6 +52,7 @@ function mapMaterial(item, signedUrl = "", storageError = "") {
     addedAt: item.created_at,
     isIndexed: Boolean(item.is_indexed),
     isShared: item.is_shared === true,
+    userId: item.user_id,
     indexError: "",
     url: signedUrl,
     path: item.storage_path,
@@ -114,6 +115,7 @@ export default function MaterialsPanel({
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [currentUserId, setCurrentUserId] = useState("");
   const [retryVersion, setRetryVersion] = useState(0);
   const [indexingPaths, setIndexingPaths] = useState(() => new Set());
   const [sharingPaths, setSharingPaths] = useState(() => new Set());
@@ -175,11 +177,11 @@ export default function MaterialsPanel({
       const { data: authData, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!authData.user) throw new Error("Sign in again to load your materials.");
+      setCurrentUserId(authData.user.id);
 
       const { data, error } = await supabase
         .from("study_materials")
         .select("*")
-        .eq("user_id", authData.user.id)
         .order("created_at", { ascending: false });
       if (error) throw error;
       if (!isActive()) return;
@@ -198,7 +200,7 @@ export default function MaterialsPanel({
       if (!isActive()) return;
       setMaterials(loaded);
       const linkFailure = loaded.find((item) => item.storageError);
-      if (linkFailure) setLoadError(`Some private download links could not be created: ${linkFailure.storageError}`);
+      if (linkFailure) setLoadError(`Some download links could not be created: ${linkFailure.storageError}`);
       onLoadStatusChange?.("loaded");
     } catch (error) {
       if (!isActive()) return;
@@ -292,8 +294,9 @@ export default function MaterialsPanel({
       const { data: authData, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!authData.user) throw new Error("Sign in again to create a course.");
-      const code = newCourseCode.trim().toUpperCase() || makeCourseCode(name, courses);
-      if (courses.some((course) => (course.code || course.course_code)?.toUpperCase() === code)) {
+      const ownCourses = courses.filter((course) => course.owner_id === authData.user.id);
+      const code = newCourseCode.trim().toUpperCase() || makeCourseCode(name, ownCourses);
+      if (ownCourses.some((course) => (course.code || course.course_code)?.toUpperCase() === code)) {
         throw new Error("That course code is already in use.");
       }
       const { data, error } = await supabase.from("courses").insert({
@@ -307,7 +310,7 @@ export default function MaterialsPanel({
         progress: 0,
         color: "purple",
         materials: 0,
-      }).select().single();
+      }).select("id, owner_id, name, title, code, course_code, semester, description, color, created_at").single();
       if (error) throw error;
       const next = { ...data, name: data.name || data.title, code: data.code || data.course_code };
       setCourses?.((current) => [next, ...current]);
@@ -330,8 +333,8 @@ export default function MaterialsPanel({
       setUploadError("Choose a file first.");
       return;
     }
-    if (!courseId || !courses.some((course) => String(course.id) === String(courseId))) {
-      setUploadError("Choose one of your courses before uploading this material.");
+    if (courseId && !courses.some((course) => String(course.id) === String(courseId))) {
+      setUploadError("Choose a course you can access, or select no course.");
       return;
     }
     if (!supabase || !isSupabaseConfigured) {
@@ -355,22 +358,20 @@ export default function MaterialsPanel({
       uploadedPath = path;
       const { data: existing, error: existingError } = await supabase
         .from("study_materials")
-        .select("storage_path, course_id, name, subject, size, type, created_at, is_indexed, is_shared")
+        .select("user_id, storage_path, course_id, name, subject, size, type, created_at, is_indexed, is_shared")
         .eq("user_id", authData.user.id)
         .eq("storage_path", path)
         .maybeSingle();
       if (existingError) throw existingError;
 
       if (existing) {
-        if (String(existing.course_id || "") !== String(courseId)) {
-          const { error: associationError } = await supabase.from("study_materials")
-            .update({ course_id: courseId })
-            .eq("user_id", authData.user.id)
-            .eq("storage_path", path);
-          if (associationError) throw associationError;
-        }
+        const { error: associationError } = await supabase.from("study_materials")
+          .update({ course_id: courseId || null, is_shared: true })
+          .eq("user_id", authData.user.id)
+          .eq("storage_path", path);
+        if (associationError) throw associationError;
       } else {
-        setUploadStage("Uploading file to your private library…");
+        setUploadStage("Uploading file to the shared study library…");
         const { data: uploaded, error: storageError } = await supabase.storage
           .from(BUCKET)
           .upload(path, file, { contentType: file.type || "application/octet-stream", upsert: true });
@@ -386,13 +387,14 @@ export default function MaterialsPanel({
           size: file.size,
           type: fileExtension(file).toUpperCase(),
           storage_path: uploaded.path,
-          course_id: courseId,
+          course_id: courseId || null,
+          is_shared: true,
         });
         if (insertError) throw insertError;
         metadataSaved = true;
       }
 
-      setUploadStage("Creating a private download link…");
+      setUploadStage("Creating a download link…");
       const { data: signed, error: signedError } = await supabase.storage
         .from(BUCKET)
         .createSignedUrl(uploadedPath, 3600);
@@ -400,8 +402,9 @@ export default function MaterialsPanel({
 
       const now = new Date().toISOString();
       const mapped = existing
-        ? mapMaterial({ ...existing, course_id: courseId }, signed.signedUrl)
+        ? mapMaterial({ ...existing, course_id: courseId || null, is_shared: true }, signed.signedUrl)
         : mapMaterial({
+          user_id: authData.user.id,
           storage_path: uploadedPath,
           name: file.name,
           subject: courseNames.get(String(courseId)) || "",
@@ -409,12 +412,15 @@ export default function MaterialsPanel({
           type: fileExtension(file).toUpperCase(),
           created_at: now,
           is_indexed: false,
-          course_id: courseId,
+          is_shared: true,
+          course_id: courseId || null,
         }, signed.signedUrl);
 
       setMaterials((current) => [mapped, ...current.filter((item) => item.path !== mapped.path)]);
       setUploadError("");
-      notify(`${file.name} uploaded to ${courseNames.get(String(courseId)) || "your course"}.`);
+      notify(courseId
+        ? `${file.name} uploaded to ${courseNames.get(String(courseId)) || "your course"}.`
+        : `${file.name} uploaded to shared study materials.`);
       setUploadOpen(false);
       setFile(null);
       setUploadId("");
@@ -511,7 +517,7 @@ export default function MaterialsPanel({
       if (error) throw error;
       setMaterials((current) => current.map((item) => item.path === material.path ? { ...item, isShared: nextShared } : item));
       notify(nextShared
-        ? "Indexed PDF text is now visible to signed-in students. The file itself remains private."
+        ? "Indexed PDF text is now visible to signed-in students."
         : "PDF sharing turned off.");
     } catch (error) {
       console.error("Could not update PDF sharing:", error);
@@ -545,7 +551,7 @@ export default function MaterialsPanel({
 
       {uploadOpen && !compact && (
         <form className={styles.uploadForm} onSubmit={uploadMaterial}>
-          <div className={styles.uploadFormHeader}><div><h3>Upload to a course</h3><p>Your file stays private and is linked to the course you select.</p></div><button type="button" onClick={resetUpload} disabled={uploading} aria-label="Cancel upload"><X size={17} /></button></div>
+          <div className={styles.uploadFormHeader}><div><h3>Upload study material</h3><p>Your file is shared with signed-in students. Course association is optional.</p></div><button type="button" onClick={resetUpload} disabled={uploading} aria-label="Cancel upload"><X size={17} /></button></div>
 
           <div
             className={`${styles.dropZone} ${dragActive ? styles.dropActive : ""} ${file ? styles.dropHasFile : ""}`}
@@ -564,9 +570,9 @@ export default function MaterialsPanel({
           </div>
 
           <div className={styles.uploadFields}>
-            <label>Course <span className={styles.required}>Required</span>
-              <select value={courseId} onChange={(event) => { setCourseId(event.target.value); setUploadError(""); }} disabled={uploading || !courses.length} required>
-                <option value="">Select a course</option>
+            <label>Course <span>(optional)</span>
+              <select value={courseId} onChange={(event) => { setCourseId(event.target.value); setUploadError(""); }} disabled={uploading}>
+                <option value="">No course (unassigned)</option>
                 {courses.map((course) => <option key={course.id} value={course.id}>{course.name || course.title}{course.code ? ` · ${course.code}` : ""}</option>)}
               </select>
             </label>
@@ -575,7 +581,7 @@ export default function MaterialsPanel({
 
           {!courses.length && (
             <div className={styles.noCourses}>
-              <FolderOpen size={18} /><div><strong>Create a course first</strong><span>Your selected file will stay in this form.</span></div>
+              <FolderOpen size={18} /><div><strong>No courses available</strong><span>You can upload this as an unassigned material or create a course.</span></div>
               {!creatingCourse && <button type="button" onClick={() => setCreatingCourse(true)}>Create course</button>}
             </div>
           )}
@@ -593,7 +599,7 @@ export default function MaterialsPanel({
           {uploading && <div className={styles.progressState} role="status"><LoaderCircle size={16} /><div><strong>{uploadStage}</strong><div className={styles.progressTrack}><span /></div></div></div>}
           {uploadError && <div className={styles.uploadError} role="alert"><AlertCircle size={15} /><span>{uploadError}</span></div>}
           <div className={styles.formActions}>
-            <button className={styles.submitUpload} type="submit" disabled={uploading || !file || !courseId || !courses.length}>{uploading ? "Uploading…" : uploadAttempt ? "Retry upload" : "Upload material"}</button>
+            <button className={styles.submitUpload} type="submit" disabled={uploading || !file}>{uploading ? "Uploading…" : uploadAttempt ? "Retry upload" : "Upload material"}</button>
             <button className={styles.cancelUpload} type="button" onClick={resetUpload} disabled={uploading}>Cancel</button>
           </div>
         </form>
@@ -622,20 +628,23 @@ export default function MaterialsPanel({
           const courseIdForMaterial = selectedCourseId(material);
           const courseName = courseNames.get(String(courseIdForMaterial)) || (courseIdForMaterial ? "Course unavailable" : "Unassigned");
           const isIndexing = indexingPaths.has(material.path);
+          const uploaderLabel = material.userId === currentUserId
+            ? "You"
+            : material.userId ? `Student ${material.userId.slice(0, 8)}` : "Student";
           const row = (
             <article className={styles.item} key={material.id}>
               <span className={styles.fileIcon}><FileText size={18} /></span>
               <button type="button" className={styles.materialInfo} onClick={() => setSelectedMaterial(material)}>
                 <strong title={material.name}>{material.name}</strong>
-                <small>{courseName} · {materialType(material)} · {formatSize(material.size)} · {formatDate(material.addedAt)} · You</small>
+                <small>{courseName} · {materialType(material)} · {formatSize(material.size)} · Uploaded by {uploaderLabel} · {formatDate(material.addedAt)}</small>
                 {material.storageError && <small className={styles.itemError}>{material.storageError}</small>}
                 {material.indexError && <small className={styles.itemError}>{material.indexError}</small>}
               </button>
-              {isPdf && !material.isIndexed && <button type="button" className={styles.index} onClick={() => indexMaterial(material)} disabled={isIndexing} title={material.indexError || "Index PDF for AI study"}>{isIndexing ? <LoaderCircle size={14} /> : "Retry index"}</button>}
-              {isPdf && material.isIndexed && <button type="button" className={material.isShared ? styles.shared : styles.share} onClick={() => toggleSharedMaterial(material)} disabled={sharingPaths.has(material.path)} aria-pressed={material.isShared} title={material.isShared ? "Turn off shared PDF text access" : "Let signed-in students search this PDF's text"}><Share2 size={14} /><span>{sharingPaths.has(material.path) ? "Saving…" : material.isShared ? "Shared" : "Share text"}</span></button>}
-              <button type="button" className={styles.open} onClick={() => material.url ? setSelectedMaterial(material) : setLoadError(material.storageError || "Private download link is unavailable.")} aria-label={`Preview ${material.name}`} title="Preview material"><Eye size={15} /></button>
+              {material.userId === currentUserId && isPdf && !material.isIndexed && <button type="button" className={styles.index} onClick={() => indexMaterial(material)} disabled={isIndexing} title={material.indexError || "Index PDF for AI study"}>{isIndexing ? <LoaderCircle size={14} /> : "Retry index"}</button>}
+      {material.userId === currentUserId && <button type="button" className={material.isShared ? styles.shared : styles.share} onClick={() => toggleSharedMaterial(material)} disabled={sharingPaths.has(material.path)} aria-pressed={material.isShared} title={material.isShared ? "Turn off student access to this material" : "Share this material with signed-in students"}><Share2 size={14} /><span>{sharingPaths.has(material.path) ? "Saving…" : material.isShared ? "Shared" : "Private"}</span></button>}
+              <button type="button" className={styles.open} onClick={() => material.url ? setSelectedMaterial(material) : setLoadError(material.storageError || "Download link is unavailable.")} aria-label={`Preview ${material.name}`} title="Preview material"><Eye size={15} /></button>
               {material.url && <a className={styles.download} href={material.url} download={material.name} target="_blank" rel="noreferrer" title="Download file" aria-label={`Download ${material.name}`}><Download size={15} /></a>}
-              <button type="button" className={styles.remove} onClick={() => setDeleteTarget(material)} title="Delete material" aria-label={`Delete ${material.name}`}><Trash2 size={15} /></button>
+              {material.userId === currentUserId && <button type="button" className={styles.remove} onClick={() => setDeleteTarget(material)} title="Delete material" aria-label={`Delete ${material.name}`}><Trash2 size={15} /></button>}
             </article>
           );
           return row;

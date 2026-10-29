@@ -5,6 +5,8 @@ import { CourseCard } from "../CourseCard/index.js";
 import { EmptyState } from "../EmptyState/index.js";
 import styles from "./CourseLibrary.module.css";
 
+const COURSE_SELECT_COLUMNS = "id, owner_id, name, title, code, course_code, semester, description, color, created_at";
+
 function courseCode(title, requested, existing) {
   const input = requested.trim().toUpperCase();
   if (input) return input;
@@ -57,6 +59,7 @@ export default function CourseLibrary({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [coursesLoaded, setCoursesLoaded] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState("");
   const [refreshVersion, setRefreshVersion] = useState(0);
 
   useEffect(() => {
@@ -91,11 +94,11 @@ export default function CourseLibrary({
       const { data: authData, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!authData.user) throw new Error("Sign in again to load your courses.");
+      setCurrentUserId(authData.user.id);
 
       const { data, error: queryError } = await supabase
         .from("courses")
-        .select("*")
-        .eq("owner_id", authData.user.id)
+        .select(COURSE_SELECT_COLUMNS)
         .order("created_at", { ascending: false });
       if (queryError) throw queryError;
       setCourses((data || []).map(normalizeCourse));
@@ -136,6 +139,7 @@ export default function CourseLibrary({
   }
 
   function startEdit(course) {
+    if (course.owner_id !== currentUserId) return;
     setEditingCourse(course);
     setTitle(course.name);
     setCode(course.code || "");
@@ -154,7 +158,8 @@ export default function CourseLibrary({
   async function saveCourse(event) {
     event.preventDefault();
     const cleanTitle = title.trim();
-    const cleanCode = courseCode(cleanTitle, code, courses);
+    const ownCourses = courses.filter((course) => course.owner_id === currentUserId);
+    const cleanCode = courseCode(cleanTitle, code, ownCourses);
     if (cleanTitle.length < 2) {
       setError("Use at least 2 characters for the course name.");
       return;
@@ -163,7 +168,7 @@ export default function CourseLibrary({
       setError("Course code must be 16 characters or fewer.");
       return;
     }
-    if (courses.some((course) => course.id !== editingCourse?.id && course.code?.toUpperCase() === cleanCode)) {
+    if (ownCourses.some((course) => course.id !== editingCourse?.id && course.code?.toUpperCase() === cleanCode)) {
       setError("That course code is already in use. Choose another code.");
       return;
     }
@@ -178,6 +183,9 @@ export default function CourseLibrary({
       const { data: authData, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!authData.user) throw new Error("Sign in again to save this course.");
+      if (editingCourse && editingCourse.owner_id !== authData.user.id) {
+        throw new Error("Only the course owner can edit this course.");
+      }
 
       const fields = {
         owner_id: authData.user.id,
@@ -195,7 +203,7 @@ export default function CourseLibrary({
           .update(fields)
           .eq("id", editingCourse.id)
           .eq("owner_id", authData.user.id)
-          .select()
+          .select(COURSE_SELECT_COLUMNS)
           .single();
         if (updateError) throw updateError;
         setCourses((current) => current.map((course) => course.id === data.id ? normalizeCourse({ ...course, ...data }) : course));
@@ -204,7 +212,7 @@ export default function CourseLibrary({
         const { data, error: insertError } = await supabase
           .from("courses")
           .insert({ ...fields, progress: 0, color: ["purple", "green", "blue", "orange"][courses.length % 4], materials: 0 })
-          .select()
+          .select(COURSE_SELECT_COLUMNS)
           .single();
         if (insertError) throw insertError;
         setCourses((current) => [normalizeCourse(data), ...current]);
@@ -228,6 +236,7 @@ export default function CourseLibrary({
       const { data: authData, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!authData.user) throw new Error("Sign in again to delete this course.");
+      if (course.owner_id !== authData.user.id) throw new Error("Only the course owner can delete this course.");
       const { error: deleteError, count } = await supabase
         .from("courses")
         .delete({ count: "exact" })
@@ -264,10 +273,10 @@ export default function CourseLibrary({
       <section className={styles.panel}>
         <div className={styles.detailTop}>
           <button type="button" className={styles.back} onClick={() => setSelectedCourseId("")}><ArrowLeft size={15} /> All courses</button>
-          <div className={styles.detailActions}>
+          {selectedCourse.owner_id === currentUserId && <div className={styles.detailActions}>
             <button type="button" className={styles.secondaryAction} onClick={() => startEdit(selectedCourse)}><Edit3 size={14} /> Edit course</button>
             <button type="button" className={styles.dangerAction} onClick={() => setDeleteTarget(selectedCourse)}><Trash2 size={14} /> Delete</button>
-          </div>
+          </div>}
         </div>
         <div className={styles.detailHeading}>
           <span className={styles.detailIcon}><BookOpen size={23} /></span>
@@ -326,7 +335,7 @@ export default function CourseLibrary({
   return (
     <section className={styles.panel}>
       <div className={styles.header}>
-        <div><h2>{compact ? "My courses" : "Course library"}</h2><p>{compact ? "Your subjects at a glance" : "Create, organize, and manage your subjects."}</p></div>
+        <div><h2>{compact ? "College courses" : "Course library"}</h2><p>{compact ? "Browse shared subjects and semesters" : "Browse college subjects; create and manage your own courses."}</p></div>
         <div className={styles.controls}>
           {!compact && <select value={semester} onChange={(event) => setSemester(event.target.value)} aria-label="Filter courses by semester"><option value="all">All semesters</option>{Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={String(index + 1)}>Semester {index + 1}</option>)}</select>}
           <button type="button" onClick={formOpen ? closeForm : startCreate} className={styles.add}><Plus size={15} /><span>{formOpen ? "Close" : "Add course"}</span></button>
@@ -345,7 +354,7 @@ export default function CourseLibrary({
           const courseMaterials = materials.filter((item) => String(item.courseId || item.course_id || "") === String(course.id)).length;
           const courseTasks = tasks.filter((task) => String(task.courseId || "") === String(course.id));
           const progress = courseTasks.length ? Math.round(courseTasks.filter((task) => task.completed).length / courseTasks.length * 100) : 0;
-          return <CourseCard key={course.id} course={{ ...course, materials: courseMaterials, progress, progressTasks: courseTasks.length }} onOpen={() => onOpenCourse ? onOpenCourse(course.id) : setSelectedCourseId(course.id)} onDelete={setDeleteTarget} />;
+          return <CourseCard key={course.id} course={{ ...course, materials: courseMaterials, progress, progressTasks: courseTasks.length }} canManage={course.owner_id === currentUserId} onOpen={() => onOpenCourse ? onOpenCourse(course.id) : setSelectedCourseId(course.id)} onDelete={setDeleteTarget} />;
         })}
       </div>
       {!loading && !error && !visible.length && <EmptyState icon={BookOpen} title={query ? "No matching courses" : "No courses yet"} description={query ? "Try another search." : "Create your first course to organize materials, assignments, and progress."} />}

@@ -51,6 +51,42 @@ from storage.buckets
 where id in ('study-materials', 'profile-photos')
 order by id;
 
+-- Read-only: expose table- and column-level SQL grants, including the course
+-- progress/material counters that the college-wide course browser keeps private.
+select grantee, table_name, 'table' as privilege_scope,
+       privilege_type, null::text as column_name
+from information_schema.table_privileges
+where table_schema = 'public'
+  and table_name in ('courses', 'study_materials', 'user_app_data', 'book_chunks')
+union all
+select grantee, table_name, 'column' as privilege_scope,
+       privilege_type, column_name
+from information_schema.column_privileges
+where table_schema = 'public'
+  and table_name in ('courses', 'study_materials', 'user_app_data', 'book_chunks')
+order by table_name, grantee, privilege_scope, privilege_type, column_name;
+
+-- Read-only: verify metadata-to-Storage existence and ownership. Legacy paths
+-- are reported for review but are valid when the object owner matches user_id.
+select m.user_id,
+       m.storage_path,
+       split_part(m.storage_path, '/', 1) as path_owner_id,
+       case when split_part(m.storage_path, '/', 1) = m.user_id::text
+                  and position('/' in m.storage_path) > 0
+            then 'user-folder' else 'legacy-path' end as path_layout,
+       o.name is not null as storage_object_exists,
+       o.owner_id::text as storage_owner_id,
+       o.owner_id::text = m.user_id::text as storage_owner_matches
+from public.study_materials m
+left join storage.objects o
+  on o.bucket_id = 'study-materials'
+ and o.name = m.storage_path
+where split_part(m.storage_path, '/', 1) <> m.user_id::text
+   or position('/' in m.storage_path) = 0
+   or o.name is null
+   or o.owner_id::text is distinct from m.user_id::text
+order by m.user_id, m.storage_path;
+
 select schemaname, tablename, policyname, roles, cmd, qual, with_check
 from pg_policies
 where (schemaname = 'public'

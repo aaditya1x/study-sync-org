@@ -8,7 +8,7 @@ const tones = {
   orange: "color-mix(in srgb,#d97732 12%,var(--surface))",
 };
 
-export default function CourseCard({ course, onOpen, onDelete }) {
+export default function CourseCard({ course, onOpen, onDelete, canManage = true }) {
   const progress = Math.min(100, Math.max(0, Number(course.progress) || 0));
   return (
     <article className={styles.card}>
@@ -17,6 +17,7 @@ export default function CourseCard({ course, onOpen, onDelete }) {
         <span className={styles.semester}>Semester {course.semester || 1}</span>
       </div>
       <h3>{course.name}</h3>
+      <span className={styles.ownerBadge}>{canManage ? "Your course" : "Shared course"}</span>
       <p className={styles.code}>{course.code || "Course code not set"} <span>·</span> {course.materials || 0} materials</p>
       <div className={styles.progressLabel}>
         <span>Task completion</span>
@@ -28,7 +29,7 @@ export default function CourseCard({ course, onOpen, onDelete }) {
       <p className={styles.progressNote}>{course.progressTasks ? `Based on ${course.progressTasks} linked task${course.progressTasks === 1 ? "" : "s"}` : "Link tasks to track course progress"}</p>
       <div className={styles.actions}>
         <button type="button" onClick={onOpen} className={styles.open}>Open course <ArrowUpRight size={14} /></button>
-        <button type="button" className={styles.delete} onClick={() => onDelete?.(course)} aria-label={`Delete ${course.name}`} title="Delete course"><Trash2 size={15} /></button>
+        {canManage && <button type="button" className={styles.delete} onClick={() => onDelete?.(course)} aria-label={`Delete ${course.name}`} title="Delete course"><Trash2 size={15} /></button>}
       </div>
     </article>
   );

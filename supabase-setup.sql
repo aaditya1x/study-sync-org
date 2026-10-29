@@ -24,6 +24,8 @@ create table if not exists public.study_materials (
 
 alter table public.study_materials
   add column if not exists is_indexed boolean not null default false;
+alter table public.study_materials
+  add column if not exists is_shared boolean not null default false;
 
 create table if not exists public.book_chunks (
   id uuid primary key default gen_random_uuid(),
@@ -96,11 +98,14 @@ alter table public.study_materials enable row level security;
 alter table public.book_chunks enable row level security;
 alter table public.user_app_data enable row level security;
 alter table public.courses enable row level security;
-grant select, insert, delete on public.study_materials to authenticated;
+grant select, insert, update, delete on public.study_materials to authenticated;
 grant select, insert, update, delete on public.study_materials to service_role;
 grant select, insert, update, delete on public.book_chunks to service_role;
 grant select, insert, update, delete on public.user_app_data to authenticated;
-grant select, insert, update, delete on public.courses to authenticated;
+grant insert, update, delete on public.courses to authenticated;
+revoke select on table public.courses from public, anon, authenticated;
+grant select (id, owner_id, name, title, code, course_code, semester, description, color, created_at)
+  on table public.courses to authenticated;
 
 drop policy if exists "Users can read own app data" on public.user_app_data;
 create policy "Users can read own app data"
@@ -119,9 +124,9 @@ create policy "Users can update own app data"
   with check (auth.uid() = user_id);
 
 drop policy if exists "Users can read own courses" on public.courses;
-create policy "Users can read own courses"
+create policy "Authenticated students can read shared courses"
   on public.courses for select to authenticated
-  using (auth.uid() = owner_id);
+  using (auth.uid() is not null);
 
 drop policy if exists "Users can insert own courses" on public.courses;
 create policy "Users can insert own courses"
@@ -142,7 +147,7 @@ create policy "Users can delete own courses"
 drop policy if exists "Users can read own study materials" on public.study_materials;
 create policy "Users can read own study materials"
   on public.study_materials for select to authenticated
-  using (auth.uid() = user_id);
+  using (auth.uid() = user_id or is_shared is true);
 
 drop policy if exists "Users can add own study materials" on public.study_materials;
 create policy "Users can add own study materials"
@@ -197,6 +202,18 @@ create policy "Users can access own study material files"
   with check (
     bucket_id = 'study-materials'
     and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "Authenticated students can read shared study material files" on storage.objects;
+create policy "Authenticated students can read shared study material files"
+  on storage.objects for select to authenticated
+  using (
+    bucket_id = 'study-materials'
+    and exists (
+      select 1 from public.study_materials as material
+      where material.storage_path = storage.objects.name
+        and (material.user_id = auth.uid() or material.is_shared is true)
+    )
   );
 
 drop policy if exists "Users can access own profile photos" on storage.objects;
