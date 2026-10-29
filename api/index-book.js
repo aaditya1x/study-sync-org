@@ -1,19 +1,16 @@
 
 import { createClient } from "@supabase/supabase-js";
-import { PDFParse } from "pdf-parse";
+import PDFParser from "pdf2json";
+import { logApiFailure, missingServerEnv, readServerEnv, reportMissingServerEnv } from "../server/apiDiagnostics.js";
 
-const supabaseUrl =
-  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-
-const anonKey =
-  process.env.SUPABASE_PUBLISHABLE_KEY ||
-  process.env.SUPABASE_ANON_KEY ||
-  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  process.env.VITE_SUPABASE_ANON_KEY;
-
-const serviceKey =
-  process.env.SUPABASE_SECRET_KEY ||
-  process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseUrl = readServerEnv("SUPABASE_URL", "VITE_SUPABASE_URL");
+const anonKey = readServerEnv(
+  "SUPABASE_PUBLISHABLE_KEY",
+  "SUPABASE_ANON_KEY",
+  "VITE_SUPABASE_PUBLISHABLE_KEY",
+  "VITE_SUPABASE_ANON_KEY",
+);
+const serviceKey = readServerEnv("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY");
 
 const authClient =
   supabaseUrl && anonKey
@@ -54,6 +51,59 @@ function splitIntoChunks(text, maxLength = 1400) {
   return chunks;
 }
 
+function extractPdfPages(buffer) {
+  return new Promise((resolve, reject) => {
+    const parser = new PDFParser(null, true);
+    let settled = false;
+
+    parser.once("pdfParser_dataError", (event) => {
+      if (settled) return;
+      settled = true;
+      const error = event?.parserError || event;
+      parser.destroy();
+      reject(error instanceof Error ? error : new Error("PDF text extraction failed."));
+    });
+
+    parser.once("pdfParser_dataReady", (document) => {
+      if (settled || !document) return;
+      settled = true;
+
+      const extracted = parser.getRawTextContent();
+      const pageBreak = /\r?\n-+Page \(\d+\) Break-+\r?\n/g;
+      const matches = [...extracted.matchAll(pageBreak)];
+      const pages = [];
+      let offset = 0;
+
+      for (const match of matches) {
+        pages.push(extracted.slice(offset, match.index).trim());
+        offset = match.index + match[0].length;
+      }
+
+      if (pages.length < (document.Pages || []).length) {
+        pages.push(extracted.slice(offset).trim());
+      }
+
+      parser.destroy();
+      if (pages.length !== (document.Pages || []).length) {
+        reject(new Error("PDF parser returned an unexpected page count."));
+        return;
+      }
+
+      resolve(pages);
+    });
+
+    try {
+      parser.parseBuffer(buffer, 1);
+    } catch (error) {
+      if (!settled) {
+        settled = true;
+        parser.destroy();
+        reject(error);
+      }
+    }
+  });
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -62,10 +112,14 @@ export default async function handler(req, res) {
     });
   }
 
-  if (!authClient || !admin) {
-    return res.status(500).json({
-      error: "Missing Supabase server environment variables.",
-    });
+  const missing = missingServerEnv({
+    SUPABASE_URL: supabaseUrl,
+    SUPABASE_PUBLISHABLE_KEY: anonKey,
+    SUPABASE_SECRET_KEY: serviceKey,
+  });
+  if (missing.length || !authClient || !admin) {
+    if (!missing.length) missing.push("SUPABASE_URL (valid URL)");
+    return reportMissingServerEnv(res, "PDF indexing", missing);
   }
 
   // Require a real Supabase Auth access token.
@@ -78,10 +132,16 @@ export default async function handler(req, res) {
     });
   }
 
-  const {
-    data: { user },
-    error: authError,
-  } = await authClient.auth.getUser(match[1]);
+  let user;
+  let authError;
+  try {
+    const { data, error } = await authClient.auth.getUser(match[1]);
+    user = data?.user;
+    authError = error;
+  } catch (error) {
+    logApiFailure("supabase_auth_unavailable", error, { route: "/api/index-book" });
+    return res.status(503).json({ code: "AUTH_SERVICE_UNAVAILABLE", error: "Supabase authentication is temporarily unavailable. Try again shortly." });
+  }
 
   if (authError || !user) {
     return res.status(401).json({
@@ -102,6 +162,7 @@ export default async function handler(req, res) {
     });
   }
 
+  let failureStage = "material_lookup_failed";
   try {
     // Verify that this file belongs to the authenticated user.
     const { data: material, error: materialError } = await admin
@@ -112,7 +173,7 @@ export default async function handler(req, res) {
       .maybeSingle();
 
     if (materialError) {
-      console.error("Material lookup failed:", materialError);
+      logApiFailure("material_lookup_failed", materialError, { route: "/api/index-book" });
       return res.status(500).json({
         error: "Could not verify file ownership.",
       });
@@ -133,12 +194,15 @@ export default async function handler(req, res) {
       });
     }
 
+    failureStage = "storage_download_failed";
     const { data: file, error: downloadError } = await admin.storage
       .from("study-materials")
       .download(storage_path);
 
     if (downloadError || !file) {
-      return res.status(404).json({
+      logApiFailure("storage_download_failed", downloadError, { route: "/api/index-book" });
+      return res.status(502).json({
+        code: "PDF_STORAGE_RETRIEVAL_FAILED",
         error: "Could not download the PDF from Storage.",
       });
     }
@@ -158,19 +222,8 @@ export default async function handler(req, res) {
     }
 
 
-    const parser = new PDFParse({ data: buffer });
-    let parsed;
-    try {
-      parsed = await parser.getText();
-    } finally {
-      await parser.destroy();
-    }
-
-    const pages = (parsed.pages || []).map((page) => page.text.trim());
-    const fullText = parsed.text || "";
-    if (pages.every((page) => !page) && fullText.trim()) {
-      pages.push(fullText.trim());
-    }
+    failureStage = "pdf_text_extraction_failed";
+    const pages = await extractPdfPages(buffer);
 
 
     const rows = [];
@@ -195,6 +248,7 @@ export default async function handler(req, res) {
       });
     }
 
+    failureStage = "chunk_persistence_failed";
     // Remove only this user's previous index for this file.
     const { error: deleteError } = await admin
       .from("book_chunks")
@@ -227,10 +281,13 @@ export default async function handler(req, res) {
       chunks_saved: rows.length,
     });
   } catch (error) {
-    console.error("PDF indexing failed:", error);
+    logApiFailure(failureStage, error, { route: "/api/index-book" });
 
     return res.status(500).json({
-      error: "PDF indexing failed. Check the server logs.",
+      code: failureStage.toUpperCase(),
+      error: failureStage === "pdf_text_extraction_failed"
+        ? "Could not extract text from this PDF. It may be damaged or image-only."
+        : "PDF indexing failed. Check the Vercel Function Logs.",
     });
   }
 }

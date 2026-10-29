@@ -1,12 +1,15 @@
 
 import { createClient } from "@supabase/supabase-js";
+import { logApiFailure, missingServerEnv, readServerEnv, reportMissingServerEnv } from "../server/apiDiagnostics.js";
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const publishableKey =
-  process.env.SUPABASE_PUBLISHABLE_KEY ||
-  process.env.SUPABASE_ANON_KEY ||
-  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  process.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = readServerEnv("SUPABASE_URL", "VITE_SUPABASE_URL");
+const publishableKey = readServerEnv(
+  "SUPABASE_PUBLISHABLE_KEY",
+  "SUPABASE_ANON_KEY",
+  "VITE_SUPABASE_PUBLISHABLE_KEY",
+  "VITE_SUPABASE_ANON_KEY",
+);
+const apiKey = readServerEnv("GEMINI_API_KEY");
 const authClient = supabaseUrl && publishableKey
   ? createClient(supabaseUrl, publishableKey, {
       auth: { persistSession: false, autoRefreshToken: false },
@@ -21,12 +24,14 @@ export default async function handler(req, res) {
     });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-
-  if (!apiKey || !authClient) {
-    return res.status(500).json({
-      error: "Gemini or Supabase server environment variables are missing.",
-    });
+  const missing = missingServerEnv({
+    SUPABASE_URL: supabaseUrl,
+    SUPABASE_PUBLISHABLE_KEY: publishableKey,
+    GEMINI_API_KEY: apiKey,
+  });
+  if (missing.length || !authClient) {
+    if (!missing.length) missing.push("SUPABASE_URL (valid URL)");
+    return reportMissingServerEnv(res, "AI study tools", missing);
   }
 
   const authorization = req.headers.authorization || "";
@@ -35,7 +40,14 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Please sign in to use AI Study Tools." });
   }
 
-  const { data: authData, error: authError } = await authClient.auth.getUser(token);
+  let authData;
+  let authError;
+  try {
+    ({ data: authData, error: authError } = await authClient.auth.getUser(token));
+  } catch (error) {
+    logApiFailure("supabase_auth_unavailable", error, { route: "/api/ai" });
+    return res.status(503).json({ code: "AUTH_SERVICE_UNAVAILABLE", error: "Supabase authentication is temporarily unavailable. Try again shortly." });
+  }
   if (authError || !authData?.user) {
     return res.status(401).json({ error: "Your session expired. Please sign in again." });
   }
@@ -114,7 +126,11 @@ export default async function handler(req, res) {
     const data = await response.json();
 
     if (!response.ok) {
-      console.error("Gemini API error:", response.status, data);
+      logApiFailure("gemini_request_failed", null, {
+        route: "/api/ai",
+        upstreamStatus: response.status,
+        upstreamCode: data.error?.status || undefined,
+      });
 
       if (response.status === 429 || response.status === 503) {
         return res.status(503).json({
@@ -124,7 +140,8 @@ export default async function handler(req, res) {
 
       if (response.status === 401 || response.status === 403) {
         return res.status(502).json({
-          error: "Gemini API key or project access is invalid. Check your Google AI Studio key.",
+          code: "GEMINI_CREDENTIALS_REJECTED",
+          error: "Gemini rejected the server API key or project access. Check GEMINI_API_KEY in Vercel.",
         });
       }
 
@@ -152,7 +169,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ result });
   } catch (error) {
-    console.error("Study Sync AI error:", error);
+    logApiFailure("ai_generation_failed", error, { route: "/api/ai" });
 
     if (error.name === "AbortError") {
       return res.status(504).json({

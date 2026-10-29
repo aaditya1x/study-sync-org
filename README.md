@@ -23,6 +23,8 @@ npm run dev
 
 Supabase Auth and private Storage uploads are wired into the app. Study materials and profile photos are saved to private Supabase Storage buckets; the app creates signed URLs for downloads. Text-based PDFs are indexed into private, user-scoped chunks so AI Study Tools can answer questions with page references. Scanned PDFs need OCR and are not supported for Q&A yet.
 
+PDF indexing uses `pdf2json` for page-preserving text extraction without native canvas bindings. The project requires Node.js `>=22.23.2` for the Vercel function runtime.
+
 1. Copy `.env.example` to `.env` in the same folder as `package.json`, or update your existing `.env` there.
 2. In your Supabase project, open **Connect** and copy the Project URL and publishable key into `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
 3. Never put a secret or `service_role` key in frontend code.
@@ -33,6 +35,19 @@ Supabase Auth and private Storage uploads are wired into the app. Study material
 8. Restart Vite after changing `.env`.
 
 The local Vite server serves `/api/ai`, `/api/index-book`, and `/api/ask-book`. In production, set those server-only variables in your hosting provider's function environment. Profile photo object paths are saved in the signed-in user's Supabase Auth `user_metadata.avatar_path`; this project does not depend on a `public.profiles` table for the photo.
+
+## Deploy API routes to Vercel
+
+The root `api/` directory contains Vercel Node.js Functions: `api/ai.js` serves `/api/ai`, `api/index-book.js` serves `/api/index-book`, and `api/ask-book.js` serves `/api/ask-book`. The Vite middleware in `vite.config.js` is only for local development; it does not deploy these functions. Keep the Vercel project root set to this repository folder so Vercel detects `api/` alongside `package.json`.
+
+In Vercel **Project Settings → Environment Variables**, add these server variables for Production (and Preview too if you test preview deployments):
+
+- `SUPABASE_URL` — the Project URL from Supabase.
+- `SUPABASE_PUBLISHABLE_KEY` — the project's publishable key from Supabase API Keys.
+- `SUPABASE_SECRET_KEY` — a server-only secret key from Supabase API Keys. The older `SUPABASE_SERVICE_ROLE_KEY` is also accepted by the routes, but do not expose either key to the browser.
+- `GEMINI_API_KEY` — the key from Google AI Studio for the Gemini API.
+
+Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` separately for the frontend build. Never prefix the Gemini or Supabase secret key with `VITE_`. After changing Vercel variables, create a new deployment; existing deployments do not receive environment variable changes. The API routes report missing variable names, without values, in the response and Vercel Function Logs.
 
 Tasks and courses use Postgres tables separately from Storage. File content is stored in the private buckets, with short-lived signed links for downloads.
 

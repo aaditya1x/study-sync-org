@@ -1,15 +1,15 @@
 import { createClient } from "@supabase/supabase-js";
+import { logApiFailure, missingServerEnv, readServerEnv, reportMissingServerEnv } from "../server/apiDiagnostics.js";
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const publishableKey =
-  process.env.SUPABASE_PUBLISHABLE_KEY ||
-  process.env.SUPABASE_ANON_KEY ||
-  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  process.env.VITE_SUPABASE_ANON_KEY;
-const secretKey =
-  process.env.SUPABASE_SECRET_KEY ||
-  process.env.SUPABASE_SERVICE_ROLE_KEY;
-const geminiKey = process.env.GEMINI_API_KEY;
+const supabaseUrl = readServerEnv("SUPABASE_URL", "VITE_SUPABASE_URL");
+const publishableKey = readServerEnv(
+  "SUPABASE_PUBLISHABLE_KEY",
+  "SUPABASE_ANON_KEY",
+  "VITE_SUPABASE_PUBLISHABLE_KEY",
+  "VITE_SUPABASE_ANON_KEY",
+);
+const secretKey = readServerEnv("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY");
+const geminiKey = readServerEnv("GEMINI_API_KEY");
 
 const authClient = supabaseUrl && publishableKey
   ? createClient(supabaseUrl, publishableKey, {
@@ -85,10 +85,15 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Only POST requests are allowed." });
   }
 
-  if (!authClient || !admin || !geminiKey) {
-    return res.status(500).json({
-      error: "Server setup is incomplete. Check Supabase and Gemini environment variables.",
-    });
+  const missing = missingServerEnv({
+    SUPABASE_URL: supabaseUrl,
+    SUPABASE_PUBLISHABLE_KEY: publishableKey,
+    SUPABASE_SECRET_KEY: secretKey,
+    GEMINI_API_KEY: geminiKey,
+  });
+  if (missing.length || !authClient || !admin) {
+    if (!missing.length) missing.push("SUPABASE_URL (valid URL)");
+    return reportMissingServerEnv(res, "PDF study tools", missing);
   }
 
   const authorization = req.headers.authorization || "";
@@ -97,7 +102,14 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Please log in to ask about a study file." });
   }
 
-  const { data: authData, error: authError } = await authClient.auth.getUser(token);
+  let authData;
+  let authError;
+  try {
+    ({ data: authData, error: authError } = await authClient.auth.getUser(token));
+  } catch (error) {
+    logApiFailure("supabase_auth_unavailable", error, { route: "/api/ask-book" });
+    return res.status(503).json({ code: "AUTH_SERVICE_UNAVAILABLE", error: "Supabase authentication is temporarily unavailable. Try again shortly." });
+  }
   const user = authData?.user;
   if (authError || !user) {
     return res.status(401).json({ error: "Your session expired. Please log in again." });
@@ -127,7 +139,10 @@ export default async function handler(req, res) {
       .eq("storage_path", storagePath)
       .maybeSingle();
 
-    if (ownMaterialError) throw ownMaterialError;
+    if (ownMaterialError) {
+      logApiFailure("material_lookup_failed", ownMaterialError, { route: "/api/ask-book" });
+      return res.status(500).json({ code: "MATERIAL_LOOKUP_FAILED", error: "Could not retrieve the selected PDF record." });
+    }
     let material = ownMaterial;
     if (!material) {
       const { data: sharedMaterial, error: sharedMaterialError } = await admin
@@ -136,7 +151,10 @@ export default async function handler(req, res) {
         .eq("storage_path", storagePath)
         .eq("is_shared", true)
         .maybeSingle();
-      if (sharedMaterialError) throw sharedMaterialError;
+      if (sharedMaterialError) {
+        logApiFailure("shared_material_lookup_failed", sharedMaterialError, { route: "/api/ask-book" });
+        return res.status(500).json({ code: "MATERIAL_LOOKUP_FAILED", error: "Could not retrieve the selected PDF record." });
+      }
       material = sharedMaterial;
     }
     if (!material) return res.status(404).json({ error: "That file is not in your library." });
@@ -181,9 +199,16 @@ export default async function handler(req, res) {
 
     const data = await response.json();
     if (!response.ok) {
-      console.error("Gemini book question error:", response.status, data);
+      logApiFailure("gemini_request_failed", null, {
+        route: "/api/ask-book",
+        upstreamStatus: response.status,
+        upstreamCode: data.error?.status || undefined,
+      });
       if (response.status === 429 || response.status === 503) {
-        return res.status(503).json({ error: "Gemini is busy. Wait a moment and try again." });
+        return res.status(503).json({ code: "GEMINI_TEMPORARILY_UNAVAILABLE", error: "Gemini is busy. Wait a moment and try again." });
+      }
+      if (response.status === 401 || response.status === 403) {
+        return res.status(502).json({ code: "GEMINI_CREDENTIALS_REJECTED", error: "Gemini rejected the server API key or project access. Check GEMINI_API_KEY in Vercel." });
       }
       return res.status(502).json({ error: "Gemini could not answer from this PDF." });
     }
@@ -200,10 +225,10 @@ export default async function handler(req, res) {
       book_name: material.name,
     });
   } catch (error) {
-    console.error("Study PDF question failed:", error);
+    logApiFailure("pdf_answer_failed", error, { route: "/api/ask-book" });
     if (error.name === "TimeoutError" || error.name === "AbortError") {
       return res.status(504).json({ error: "The PDF question took too long. Try again." });
     }
-    return res.status(500).json({ error: "Could not search this PDF. Check the server logs." });
+    return res.status(500).json({ code: "PDF_CHUNK_RETRIEVAL_FAILED", error: "Could not retrieve indexed PDF text. Check the Vercel Function Logs." });
   }
 }
