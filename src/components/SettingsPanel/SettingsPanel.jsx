@@ -43,6 +43,7 @@ export default function SettingsPanel({
   username = "Student",
   profilePicture = "",
   onProfilePictureChange,
+  onOpenAcademicProfile,
 }) {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const fileRef = useRef(null);
@@ -232,6 +233,7 @@ export default function SettingsPanel({
         <p>PREFERENCES</p>
         <h1>Settings</h1>
         <span>Make your study workspace feel like yours.</span>
+        <button type="button" className={styles.primaryButton} onClick={onOpenAcademicProfile}>My Academic Profile</button>
       </div>
 
       <div className={styles.panel}>

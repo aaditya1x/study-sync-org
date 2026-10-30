@@ -6,16 +6,16 @@
 .welcome h1 { overflow-wrap:anywhere; }
 .welcome h1 span { color:var(--primary); }
 .subtitle { color:var(--muted); margin:9px 0 0; font-size:14px; }
-.primaryButton { border:0; border-radius:12px; background:var(--primary); color:white; padding:12px 16px; font-weight:750; white-space:nowrap; box-shadow:0 8px 20px color-mix(in srgb,var(--primary) 20%,transparent); }
+.primaryButton { border:0; border-radius:12px; background:var(--primary-action); color:var(--on-primary); padding:12px 16px; font-weight:750; white-space:nowrap; box-shadow:0 8px 20px color-mix(in srgb,var(--primary) 20%,transparent); }
 .stats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:14px; margin-bottom:22px; }
 .dashboardGrid { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr); gap:20px; align-items:start; }
 .rightColumn { display:grid; gap:17px; min-width:0; }
-.aiBanner { padding:22px; border-radius:18px; background:linear-gradient(135deg,#6c5ce7,#8d7cf3); color:white; position:relative; overflow:hidden; }
+.aiBanner { padding:22px; border-radius:18px; background:var(--primary-action); color:var(--on-primary); position:relative; overflow:hidden; }
 .aiBanner:after { content:"✦"; position:absolute; right:13px; top:-25px; font-size:115px; opacity:.09; }
 .sparkle { font-size:24px; }
 .aiBanner h2 { margin:10px 0 7px; font-size:18px; }
-.aiBanner p { margin:0; max-width:320px; font-size:12px; line-height:1.7; color:#f0edff; }
-.aiBanner button { margin-top:16px; background:white; color:#6251d8; border:0; border-radius:10px; padding:10px 13px; font-size:12px; font-weight:800; }
+.aiBanner p { margin:0; max-width:320px; font-size:12px; line-height:1.7; color:var(--on-primary); }
+.aiBanner button { margin-top:16px; background:var(--surface); color:var(--primary); border:1px solid var(--control-border); border-radius:10px; padding:10px 13px; font-size:12px; font-weight:800; }
 .quickActions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
 .quickActions button { min-height:40px; padding:9px 11px; border:1px solid var(--line); border-radius:11px; background:var(--surface); color:var(--text); font-size:11px; font-weight:750; cursor:pointer; }
 .quickActions button:hover,.quickActions button:focus-visible { border-color:var(--primary); color:var(--primary); outline:none; }

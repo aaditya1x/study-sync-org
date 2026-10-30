@@ -1,2 +1,3 @@
 .shell { min-height:100vh; display:grid; grid-template-columns:248px minmax(0,1fr); background:var(--bg); }
+.collapsed { grid-template-columns:76px minmax(0,1fr); }
 @media(max-width:800px) { .shell { grid-template-columns:minmax(0,1fr); } }

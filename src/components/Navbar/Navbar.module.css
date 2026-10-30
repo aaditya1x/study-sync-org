@@ -7,10 +7,10 @@
 .menu:hover { color:var(--primary); background:var(--primary-soft); }
 .avatarButton { position:relative; width:36px; height:36px; flex:none; display:grid; place-items:center; padding:0; overflow:visible; border:0; border-radius:50%; background:#ffe6d9; color:#94572c; font-size:12px; font-weight:850; }
 .avatarButton img { width:36px; height:36px; display:block; object-fit:cover; border-radius:50%; }
-.camera { position:absolute; right:-3px; bottom:-2px; width:16px; height:16px; display:grid; place-items:center; border:2px solid var(--surface); border-radius:50%; color:white; background:var(--primary); }
+.camera { position:absolute; right:-3px; bottom:-2px; width:16px; height:16px; display:grid; place-items:center; border:2px solid var(--surface); border-radius:50%; color:var(--on-primary); background:var(--primary-action); }
 .username { max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:11px; font-weight:700; }
 .logout { display:flex; align-items:center; gap:6px; padding:9px 10px; border:1px solid var(--line); border-radius:10px; color:var(--muted); background:var(--surface); font-size:11px; font-weight:750; white-space:nowrap; cursor:pointer; }
-.logout:hover { color:#dc4c4c; border-color:#ffd5cd; background:#fff7f5; }
+.logout:hover { color:var(--danger); border-color:#ffd5cd; background:#fff7f5; }
 
 /* Dashboard-only search sits below the header and never overlays its controls. */
 .searchRow { position:relative; z-index:20; display:flex; justify-content:flex-end; width:100%; margin:-7px 0 22px; }

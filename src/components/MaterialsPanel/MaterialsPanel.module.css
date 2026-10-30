@@ -5,14 +5,14 @@
 .headerActions { display:flex; align-items:center; gap:8px; }
 .count { flex:none; padding:5px 8px; border-radius:99px; background:var(--primary-soft); color:var(--primary); font-size:10px; font-weight:800; }
 .uploadButton,.refresh,.uploadFormHeader button,.formActions button,.filters select,.search,.groupToggle { min-height:36px; border:1px solid var(--line); border-radius:9px; background:var(--surface); color:var(--text); font:inherit; font-size:11px; }
-.uploadButton { display:inline-flex; align-items:center; gap:7px; padding:8px 12px; border-color:var(--primary); background:var(--primary); color:white; font-weight:750; cursor:pointer; }
+.uploadButton { display:inline-flex; align-items:center; gap:7px; padding:8px 12px; border-color:var(--primary-action); background:var(--primary-action); color:var(--on-primary); font-weight:750; cursor:pointer; }
 .refresh { display:grid; width:36px; padding:0; place-items:center; color:var(--muted); cursor:pointer; }
 .refresh:hover { color:var(--primary); border-color:var(--primary); }
 .refresh:disabled { opacity:.55; cursor:not-allowed; }
 .loadingState { display:flex; align-items:center; gap:8px; padding:10px 0; color:var(--muted); font-size:11px; }
 .loadingState svg { animation:spin 1s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
-.errorBanner { display:flex; align-items:center; gap:9px; margin:0 0 14px; padding:11px; border:1px solid color-mix(in srgb,#de5555 32%,var(--line)); border-radius:10px; color:#bb4141; background:color-mix(in srgb,#de5555 7%,var(--surface)); font-size:11px; }
+.errorBanner { display:flex; align-items:center; gap:9px; margin:0 0 14px; padding:11px; border:1px solid color-mix(in srgb,#de5555 32%,var(--line)); border-radius:10px; color:var(--danger); background:color-mix(in srgb,#de5555 7%,var(--surface)); font-size:11px; }
 .errorBanner span { flex:1; min-width:0; overflow-wrap:anywhere; }
 .errorBanner button { flex:none; border:0; background:transparent; color:var(--primary); font-weight:800; cursor:pointer; }
 .uploadForm { margin:0 0 18px; padding:16px; border:1px solid var(--line); border-radius:14px; background:var(--surface-soft); }
@@ -35,12 +35,12 @@
 .noCourses div { display:grid; flex:1; gap:3px; min-width:0; }
 .noCourses strong { color:var(--text); font-size:11px; }
 .noCourses span { color:var(--muted); font-size:10px; }
-.noCourses button,.quickCourse button { padding:8px 10px; border:0; border-radius:8px; background:var(--primary); color:white; font-size:10px; font-weight:750; cursor:pointer; }
+.noCourses button,.quickCourse button { padding:8px 10px; border:0; border-radius:8px; background:var(--primary-action); color:var(--on-primary); font-size:10px; font-weight:750; cursor:pointer; }
 .quickCourse { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:9px; padding:12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); }
 .quickCourse>strong,.quickCourse>p,.quickCourse>div { grid-column:1/-1; }
 .quickCourse>strong { font-size:11px; }
 .quickCourse input { min-width:0; padding:9px; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--text); font-size:11px; }
-.quickCourse p { margin:0; color:#c34242; font-size:10px; }
+.quickCourse p { margin:0; color:var(--danger); font-size:10px; }
 .quickCourse>div { display:flex; gap:7px; }
 .quickCourse>div button:last-child { border:1px solid var(--line); background:var(--surface); color:var(--text); }
 .progressState { display:flex; align-items:center; gap:10px; margin-top:12px; padding:11px; border:1px solid var(--line); border-radius:9px; background:var(--surface); color:var(--primary); }
@@ -49,11 +49,11 @@
 .progressTrack { height:4px; overflow:hidden; margin-top:8px; border-radius:99px; background:var(--line); }
 .progressTrack span { display:block; width:35%; height:100%; border-radius:inherit; background:var(--primary); animation:progress 1.15s ease-in-out infinite alternate; }
 @keyframes progress { from { transform:translateX(-10%); } to { transform:translateX(190%); } }
-.uploadError { display:flex; gap:8px; margin-top:10px; padding:10px; border:1px solid color-mix(in srgb,#de5555 35%,var(--line)); border-radius:9px; color:#bc4040; background:color-mix(in srgb,#de5555 7%,var(--surface)); font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
+.uploadError { display:flex; gap:8px; margin-top:10px; padding:10px; border:1px solid color-mix(in srgb,#de5555 35%,var(--line)); border-radius:9px; color:var(--danger); background:color-mix(in srgb,#de5555 7%,var(--surface)); font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
 .uploadError svg { flex:none; margin-top:1px; }
 .formActions { display:flex; flex-wrap:wrap; gap:8px; margin-top:13px; }
 .formActions button { padding:8px 12px; cursor:pointer; }
-.submitUpload { border-color:var(--primary)!important; background:var(--primary)!important; color:white!important; font-weight:800; }
+.submitUpload { border-color:var(--primary-action)!important; background:var(--primary-action)!important; color:var(--on-primary)!important; font-weight:800; }
 .submitUpload:disabled { opacity:.55; cursor:not-allowed; }
 .cancelUpload { background:var(--surface)!important; }
 .filters { display:grid; grid-template-columns:minmax(190px,1.4fr) repeat(3,minmax(115px,1fr)) auto; align-items:center; gap:8px; margin:0 0 13px; }
@@ -81,7 +81,7 @@
 .shared { border-color:color-mix(in srgb,var(--green) 35%,var(--line)); color:var(--green); background:color-mix(in srgb,var(--green) 8%,var(--surface)); }
 .open,.download,.remove { display:grid; width:30px; height:30px; flex:none; place-items:center; border:0; border-radius:8px; color:var(--muted); background:transparent; text-decoration:none; cursor:pointer; }
 .open:hover,.download:hover { background:var(--primary-soft); color:var(--primary); }
-.remove:hover { color:#c94242; background:color-mix(in srgb,#e45c5c 8%,var(--surface)); }
+.remove:hover { color:var(--danger); background:color-mix(in srgb,#e45c5c 8%,var(--surface)); }
 .viewAll { display:flex; justify-content:space-between; width:100%; margin-top:12px; padding:10px 0 0; border:0; border-top:1px solid var(--line); background:transparent; color:var(--primary); font-size:11px; font-weight:800; cursor:pointer; }
 .modalBackdrop { position:fixed; z-index:100; inset:0; display:grid; place-items:center; padding:20px; background:rgba(12,16,28,.6); backdrop-filter:blur(3px); }
 .previewDialog,.deleteDialog { width:min(800px,100%); max-height:min(88dvh,900px); overflow:auto; border:1px solid var(--line); border-radius:16px; background:var(--surface); box-shadow:0 24px 80px rgba(0,0,0,.25); }
@@ -95,14 +95,14 @@
 .unsupportedPreview p { max-width:320px; margin:0; color:var(--muted); font-size:12px; }
 .previewFooter { display:flex; justify-content:flex-end; gap:8px; padding:13px 18px; border-top:1px solid var(--line); }
 .previewFooter a,.previewFooter button { display:inline-flex; align-items:center; gap:6px; min-height:34px; padding:8px 11px; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--text); font-size:10px; font-weight:750; text-decoration:none; cursor:pointer; }
-.previewFooter a { border-color:var(--primary); background:var(--primary); color:white; }
+.previewFooter a { border-color:var(--primary-action); background:var(--primary-action); color:var(--on-primary); }
 .deleteDialog { width:min(420px,100%); padding:22px; text-align:center; }
-.deleteIcon { display:grid; width:42px; height:42px; margin:0 auto 12px; place-items:center; border-radius:12px; color:#c94242; background:color-mix(in srgb,#e45c5c 10%,var(--surface)); }
+.deleteIcon { display:grid; width:42px; height:42px; margin:0 auto 12px; place-items:center; border-radius:12px; color:var(--danger); background:color-mix(in srgb,#e45c5c 10%,var(--surface)); }
 .deleteDialog h3 { margin:0 0 6px; font-size:15px; }
 .deleteDialog p { margin:0 auto 18px; color:var(--muted); font-size:11px; line-height:1.55; }
 .deleteDialog>div { display:flex; justify-content:center; flex-wrap:wrap; gap:8px; }
 .deleteDialog button { min-height:35px; padding:8px 11px; border:1px solid var(--line); border-radius:9px; background:var(--surface); color:var(--text); font-size:10px; font-weight:750; cursor:pointer; }
-.deleteDialog .confirmDelete { border-color:#c94242; background:#c94242; color:white; }
+.deleteDialog .confirmDelete { border-color:var(--danger); background:var(--danger); color:white; }
 
 @media(max-width:850px) { .filters { grid-template-columns:repeat(2,minmax(0,1fr)); } .search { grid-column:1/-1; } .groupToggle { justify-content:flex-start; } }
 @media(max-width:560px) {

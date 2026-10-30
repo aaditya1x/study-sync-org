@@ -27,6 +27,8 @@ import { ProgressReport } from "./components/ProgressReport/index.js";
 import { SettingsPanel } from "./components/SettingsPanel/index.js";
 import { Toast } from "./components/Toast/index.js";
 import { Login } from "./components/Login/index.js";
+import AcademicProfile from "./components/AcademicProfile/AcademicProfile.jsx";
+import AcademicAssignments from "./components/AcademicAssignments/AcademicAssignments.jsx";
 
 import { usePersistentState } from "./hooks/usePersistentState.js";
 import { supabase, STORAGE_BUCKETS } from "./lib/supabase.js";
@@ -39,14 +41,15 @@ import {
 import styles from "./App.module.css";
 
 const navItems = [
-  { id: "Dashboard", label: "Command Center", icon: LayoutDashboard },
-  { id: "Courses", label: "Academic Hub", icon: BookOpen },
-  { id: "Materials", label: "Knowledge Vault", icon: FileText },
-  { id: "Syllabus", label: "Syllabus Library", icon: GraduationCap },
-  { id: "Tasks", label: "Tasks & Assignments", icon: CheckSquare },
-  { id: "AI Tools", label: "AI Learning Lab", icon: BrainCircuit },
-  { id: "Progress", label: "Performance Intelligence", icon: ChartNoAxesCombined },
-  { id: "Settings", label: "Personal Space", icon: Settings2 },
+  { id: "Dashboard", label: "Dashboard", group: "Workspace", icon: LayoutDashboard },
+  { id: "Courses", label: "Courses & subjects", group: "Academics", icon: BookOpen },
+  { id: "Syllabus", label: "Curriculum", group: "Academics", icon: GraduationCap },
+  { id: "Materials", label: "Materials & notes", group: "Study space", icon: FileText },
+  { id: "Tasks", label: "Assignments", group: "Study space", icon: CheckSquare },
+  { id: "AI Tools", label: "AI study tools", group: "Workspace", icon: BrainCircuit },
+  { id: "Progress", label: "Progress reports", group: "Workspace", icon: ChartNoAxesCombined },
+  { id: "Settings", label: "Profile & appearance", group: "Settings", icon: Settings2 },
+  { id: "Academic Profile", label: "My academic profile", group: "Settings", icon: GraduationCap },
 ];
 
 function makeSession(user) {
@@ -67,6 +70,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [active, setActive] = useState("Dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedCourseId, setSelectedCourseId] = useState("");
   const [createCourseRequested, setCreateCourseRequested] = useState(false);
   const [uploadMaterialRequest, setUploadMaterialRequest] = useState({ open: false, courseId: "" });
@@ -74,6 +78,9 @@ export default function App() {
   const [materialLoadStatus, setMaterialLoadStatus] = useState("loading");
   const [chapterProgressByCourse, setChapterProgressByCourse] = useState({});
   const [platformRole, setPlatformRole] = useState("student");
+  const [academicProfile, setAcademicProfile] = useState(null);
+  const [academicProfileLoading, setAcademicProfileLoading] = useState(true);
+  const [academicProfileError, setAcademicProfileError] = useState("");
 
   const userStoragePrefix = session?.userId
     ? `campusflow-${session.userId}`
@@ -140,6 +147,25 @@ export default function App() {
       })
       .catch((error) => console.error("Could not load the signed-in role:", error));
     return () => { active = false; };
+  }, [session?.userId]);
+
+  useEffect(() => {
+    let current = true;
+    async function loadAcademicProfile() {
+      setAcademicProfile(null);
+      setAcademicProfileError("");
+      setAcademicProfileLoading(true);
+      if (!session?.userId || !supabase) { setAcademicProfileLoading(false); return; }
+      const { data, error } = await supabase.from("academic_profiles")
+        .select("degree_id, branch_id, academic_cycle_id, year_level, semester")
+        .eq("user_id", session.userId).maybeSingle();
+      if (!current) return;
+      if (error) setAcademicProfileError(error.message || "Could not verify your academic profile.");
+      else setAcademicProfile(data || null);
+      setAcademicProfileLoading(false);
+    }
+    loadAcademicProfile();
+    return () => { current = false; };
   }, [session?.userId]);
 
   useEffect(() => {
@@ -423,14 +449,15 @@ async function handleLogout() {
     const term = query.trim().toLowerCase();
     if (term.length < 2) return [];
     return [
-      ...courses.filter((item) => `${item.name || item.title} ${item.code || item.course_code || ""}`.toLowerCase().includes(term))
+      ...courses.filter((item) => (item.owner_id === session?.userId || item.branch_id === academicProfile?.branch_id)
+        && `${item.name || item.title} ${item.code || item.course_code || ""}`.toLowerCase().includes(term))
         .map((item) => ({ id: `course-${item.id}`, label: item.name || item.title, detail: "Course", section: "Courses", courseId: item.id })),
       ...materials.filter((item) => `${item.name} ${item.subject || ""}`.toLowerCase().includes(term))
         .map((item) => ({ id: `material-${item.id || item.path}`, label: item.name, detail: "Study material", section: "Materials" })),
       ...tasks.filter((item) => `${item.title} ${item.description || ""}`.toLowerCase().includes(term))
         .map((item) => ({ id: `task-${item.id}`, label: item.title, detail: item.completed ? "Completed task" : "Task", section: "Tasks" })),
     ].slice(0, 8);
-  }, [query, courses, materials, tasks]);
+  }, [query, courses, materials, tasks, session?.userId, academicProfile?.branch_id]);
 
   const selectSearchResult = useCallback((result) => {
     if (result.courseId) setSelectedCourseId(result.courseId);
@@ -456,6 +483,12 @@ async function handleLogout() {
     onCourseLoadStatusChange: setCourseLoadStatus,
   };
 
+  const scopedCourses = useMemo(() => courses.filter((course) => {
+    if (course.owner_id && course.owner_id === session?.userId) return true;
+    return Boolean(academicProfile?.branch_id && course.branch_id === academicProfile.branch_id);
+  }), [courses, academicProfile?.branch_id, session?.userId]);
+  const academicShared = { ...shared, courses: scopedCourses };
+
   const visibleNavItems = platformRole === "super_admin"
     ? [...navItems, { id: "Admin", label: "Super Admin", icon: ShieldCheck }]
     : navItems;
@@ -469,8 +502,14 @@ async function handleLogout() {
     return <Login onLogin={handleLogin} initialMode={isPasswordRecoveryFlow || passwordRecovery ? "reset" : undefined} onExitRecovery={() => setPasswordRecovery(false)} />;
   }
 
+  if (academicProfileLoading) return <main className={styles.loading} aria-live="polite">Preparing your academic workspace…</main>;
+  if (academicProfileError) return <main className={styles.loading} role="alert">Could not verify your academic profile: {academicProfileError}</main>;
+  if (!academicProfile || !academicProfile.degree_id || !academicProfile.branch_id) {
+    return <AcademicProfile onboarding onSaved={(profile) => { setAcademicProfile(profile); setActive("Dashboard"); }} />;
+  }
+
   return (
-    <AppShell>
+    <AppShell collapsed={sidebarCollapsed}>
       {mobileNavOpen && (
         <button
           type="button"
@@ -486,6 +525,8 @@ async function handleLogout() {
         onChange={handleNavigate}
         mobileOpen={mobileNavOpen}
         onClose={() => setMobileNavOpen(false)}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed((value) => !value)}
       />
 
       <main className={styles.main}>
@@ -530,7 +571,7 @@ async function handleLogout() {
             <section className={styles.stats} aria-label="Study overview">
               <StatCard
                 label="Available courses"
-                value={courseLoadStatus === "loading" ? "…" : courseLoadStatus === "error" ? "—" : courses.length}
+                value={courseLoadStatus === "loading" ? "…" : courseLoadStatus === "error" ? "—" : scopedCourses.length}
                 note={courseLoadStatus === "error" ? "Could not load courses" : "Shared college library"}
                 icon={BookOpen}
                 tint="purple"
@@ -572,7 +613,7 @@ async function handleLogout() {
 
             <div className={styles.dashboardGrid}>
               <CourseLibrary
-                {...shared}
+                {...academicShared}
                 compact
                 onOpenCourse={openCourse}
                 onViewAll={() => setActive("Courses")}
@@ -612,7 +653,8 @@ async function handleLogout() {
         )}
 
         {active === "Courses" && <AcademicHub
-          {...shared}
+          {...academicShared}
+          onAcademicProfileChange={setAcademicProfile}
           materials={materials}
           initialSelectedCourseId={selectedCourseId}
           onUploadMaterial={requestUpload}
@@ -624,7 +666,7 @@ async function handleLogout() {
 
         {active === "Materials" && <MaterialsPanel
           {...shared}
-          courses={courses}
+          courses={scopedCourses}
           setCourses={setCourses}
           initialCourseId={uploadMaterialRequest.courseId}
           autoOpenUpload={uploadMaterialRequest.open}
@@ -634,14 +676,14 @@ async function handleLogout() {
 
         {active === "Syllabus" && <SyllabusLibrary
           query={query}
-          courses={courses}
+          courses={scopedCourses}
           materials={materials}
           loading={courseLoadStatus === "loading" || materialLoadStatus === "loading"}
           coursesStatus={courseLoadStatus}
           materialsStatus={materialLoadStatus}
         />}
 
-        {active === "Tasks" && <TasksPanel {...shared} />}
+        {active === "Tasks" && <><AcademicAssignments courses={scopedCourses} /><TasksPanel {...shared} /></>}
 
         {active === "AI Tools" && (
           <AIStudyTools
@@ -653,7 +695,7 @@ async function handleLogout() {
 
         {active === "Progress" && (
           <ProgressReport
-            courses={courses}
+            courses={scopedCourses}
             tasks={tasks}
             materials={materials}
             chapterProgressByCourse={chapterProgressByCourse}
@@ -666,8 +708,15 @@ async function handleLogout() {
             username={session.username}
             profilePicture={profilePicture}
             onProfilePictureChange={setProfilePicture}
+            onOpenAcademicProfile={() => setActive("Academic Profile")}
           />
         )}
+
+        {active === "Academic Profile" && <AcademicProfile
+          initialProfile={academicProfile}
+          notify={notify}
+          onSaved={(profile) => { setAcademicProfile((current) => ({ ...current, ...profile })); setActive("Dashboard"); }}
+        />}
 
         {active === "Admin" && platformRole === "super_admin" && <AdminDashboard notify={notify} />}
       </main>

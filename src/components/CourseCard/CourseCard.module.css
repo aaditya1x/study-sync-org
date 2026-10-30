@@ -18,5 +18,5 @@
 .open { display:flex; flex:1; align-items:center; justify-content:center; gap:6px; min-height:34px; padding:8px; border:0; border-radius:9px; background:var(--primary-soft); color:var(--primary); font-size:10px; font-weight:800; cursor:pointer; }
 .open:hover { filter:brightness(.97); }
 .delete { display:grid; width:34px; height:34px; flex:none; place-items:center; border:1px solid var(--line); border-radius:9px; background:var(--surface); color:var(--muted); cursor:pointer; }
-.delete:hover { border-color:#dc9999; color:#c94242; background:color-mix(in srgb,#e45c5c 8%,var(--surface)); }
+.delete:hover { border-color:#dc9999; color:var(--danger); background:color-mix(in srgb,#e45c5c 8%,var(--surface)); }
 @media(prefers-reduced-motion:reduce) { .card,.track span { transition:none; } }

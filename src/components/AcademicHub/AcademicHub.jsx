@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BookOpen, GraduationCap, Layers3, Save } from "lucide-react";
 import { supabase } from "../../lib/supabase.js";
+import { validateAcademicProfile } from "../../lib/academicProfileValidation.js";
 import { CourseLibrary } from "../CourseLibrary/index.js";
 import AcademicCatalogAdmin from "./AcademicCatalogAdmin.jsx";
 import styles from "./AcademicHub.module.css";
@@ -71,6 +72,16 @@ export default function AcademicHub(props) {
   async function saveAllocation(event) {
     event.preventDefault();
     if (!supabase || !ready) return;
+    const validationError = validateAcademicProfile({
+      degreeId: profile.degree_id,
+      branchId: profile.branch_id,
+      degrees: catalog.degrees,
+      branches: catalog.branches,
+    });
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -88,6 +99,7 @@ export default function AcademicHub(props) {
       };
       const { error: saveError } = await supabase.from("academic_profiles").upsert(row, { onConflict: "user_id" });
       if (saveError) throw saveError;
+      props.onAcademicProfileChange?.(row);
       props.notify?.("Academic allocation saved.");
     } catch (saveError) {
       setError(saveError.message || "Could not save academic allocation.");

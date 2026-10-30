@@ -87,13 +87,13 @@
 
 .modeCard:hover {
   transform: translateY(-2px);
-  border-color: #8b7bff;
+  border-color: var(--primary);
 }
 
 .activeMode {
-  border-color: #9585ff;
-  background: rgba(124, 103, 255, 0.13);
-  box-shadow: 0 0 0 1px rgba(124, 103, 255, 0.2);
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent);
 }
 
 .modeCard strong {
@@ -128,7 +128,7 @@
   width: 100%;
   min-height: 44px;
   padding: 10px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-border);
   border-radius: 10px;
   background: var(--surface-soft);
   color: var(--text);
@@ -153,8 +153,8 @@
   padding: 8px 12px;
   border: 0;
   border-radius: 9px;
-  color: white;
-  background: var(--primary);
+  color: var(--on-primary);
+  background: var(--primary-action);
   font-size: 12px;
   font-weight: 700;
 }
@@ -165,22 +165,24 @@
   min-height: 190px;
   resize: vertical;
   padding: 16px;
-  border: 1px solid var(--border, #41485a);
+  border: 1px solid var(--control-border);
   border-radius: 12px;
-  background: var(--input-bg, #111622);
-  color: inherit;
+  background: var(--surface-soft);
+  color: var(--text);
   font: inherit;
   line-height: 1.7;
   outline: none;
+  caret-color: var(--primary);
 }
 
 .inputPanel textarea:focus {
-  border-color: #9585ff;
-  box-shadow: 0 0 0 3px rgba(149, 133, 255, 0.13);
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 22%, transparent);
 }
 
 .inputPanel textarea::placeholder {
-  color: #8992a7;
+  color: var(--muted);
+  opacity: 1;
 }
 
 .inputFooter {
@@ -212,16 +214,34 @@
   padding: 11px 16px;
   border: 0;
   border-radius: 10px;
-  background: #8170f8;
-  color: white;
+  background: var(--primary-action);
+  color: var(--on-primary);
   font-weight: 650;
   cursor: pointer;
 }
 
 .generateButton:disabled {
-  opacity: 0.55;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--muted);
+  opacity: 1;
   cursor: not-allowed;
 }
+
+.generateButton:not(:disabled):hover,
+.bookNotice button:hover { filter: brightness(.92); }
+
+.generateButton:focus-visible,
+.bookNotice button:focus-visible,
+.sourceModes button:focus-visible,
+.modeCard:focus-visible,
+.resultHead button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.modeCard:disabled,
+.sourceModes button:disabled { opacity: .72; }
 
 .resultHead {
   align-items: flex-start;
@@ -253,10 +273,10 @@
 
 .error {
   padding: 16px;
-  border: 1px solid #a94a55;
+  border: 1px solid var(--danger);
   border-radius: 12px;
-  background: rgba(169, 74, 85, 0.12);
-  color: #ffc4cb;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .error p {

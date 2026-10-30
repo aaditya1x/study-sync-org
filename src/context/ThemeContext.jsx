@@ -75,8 +75,6 @@ export function ThemeProvider({ children }) {
       "dark",
       "cyber",
       "midnight",
-      "ocean",
-      "solar",
     ];
 
     root.style.colorScheme = darkThemes.includes(resolvedTheme)

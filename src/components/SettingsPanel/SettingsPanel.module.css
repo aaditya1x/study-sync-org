@@ -16,19 +16,19 @@
 .profilePreview img { display:block; width:100%; height:100%; object-fit:cover; }
 .photoActions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; min-width:0; }
 .primaryButton,.removeButton,.confirmRemove button,.inlineError button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:38px; padding:8px 12px; border:1px solid var(--line); border-radius:10px; font-size:11px; font-weight:750; transition:background .16s,border-color .16s,transform .16s; }
-.primaryButton { border-color:var(--primary); background:var(--primary); color:#fff; }
+.primaryButton { border-color:var(--primary-action); background:var(--primary-action); color:var(--on-primary); }
 .primaryButton:hover:not(:disabled) { filter:brightness(1.05); transform:translateY(-1px); }
 .removeButton,.confirmRemove button,.inlineError button { background:var(--surface); color:var(--text); cursor:pointer; }
 .removeButton:hover:not(:disabled),.confirmRemove button:hover:not(:disabled),.inlineError button:hover:not(:disabled) { border-color:var(--primary); background:var(--surface-soft); }
-.removeButton { color:#c94f4f; }
+.removeButton { color:var(--danger); }
 .primaryButton:disabled,.removeButton:disabled,.confirmRemove button:disabled,.inlineError button:disabled { cursor:not-allowed; opacity:.6; }
 .spinner { animation:spin 1s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
 .help { flex-basis:100%; color:var(--muted); font-size:11px; }
 .confirmRemove { display:flex; flex-wrap:wrap; align-items:center; gap:7px; padding:5px 8px; border:1px solid var(--line); border-radius:10px; background:var(--surface-soft); color:var(--text); font-size:11px; }
 .confirmRemove button { min-height:30px; padding:5px 8px; }
-.confirmRemove button:first-of-type { color:#c94f4f; }
-.inlineError { display:flex; flex-basis:100%; flex-wrap:wrap; align-items:center; gap:8px; color:#c94f4f; font-size:11px; line-height:1.45; }
+.confirmRemove button:first-of-type { color:var(--danger); }
+.inlineError { display:flex; flex-basis:100%; flex-wrap:wrap; align-items:center; gap:8px; color:var(--danger); font-size:11px; line-height:1.45; }
 .inlineError button { min-height:30px; padding:5px 8px; color:var(--primary); }
 .appearanceControls { display:grid; gap:14px; margin:18px 0 0 56px; }
 .themeChoices { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; }

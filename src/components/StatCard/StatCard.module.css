@@ -4,7 +4,7 @@
 .interactive:focus-visible { outline:3px solid color-mix(in srgb,var(--primary) 45%,transparent); outline-offset:2px; }
 .top { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--muted); font-size:11px; font-weight:700; }
 .icon { width:35px; height:35px; flex:none; display:grid; place-items:center; border-radius:11px; }
-.purple { color:#6c5ce7; background:#f0eeff; } .green { color:#209b75; background:#e3f8f0; } .blue { color:#3f7fe8; background:#e7f0ff; } .orange { color:#b96b2e; background:#fff0e5; }
+.purple,.green,.blue,.orange { color:var(--primary); background:var(--primary-soft); }
 .value { display:block; margin-top:13px; font-size:27px; letter-spacing:-.8px; }
 .card p { margin:3px 0 0; color:var(--muted); font-size:10px; }
 @media(max-width:560px) { .card { padding:13px; } .value { font-size:23px; } .top { font-size:10px; } .icon { width:29px; height:29px; } }

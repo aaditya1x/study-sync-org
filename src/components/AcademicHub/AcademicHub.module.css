@@ -13,10 +13,10 @@
 .fields { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; }
 .fields label { display:grid; gap:6px; color:var(--muted); font-size:10px; font-weight:700; }
 .fields select { width:100%; min-width:0; padding:10px; border:1px solid var(--line); border-radius:9px; color:var(--text); background:var(--surface-soft); font-size:11px; }
-.save { display:inline-flex; align-items:center; gap:7px; margin-top:13px; padding:9px 12px; border:1px solid var(--primary); border-radius:9px; color:#fff; background:var(--primary); font-size:11px; font-weight:800; }
+.save { display:inline-flex; align-items:center; gap:7px; margin-top:13px; padding:9px 12px; border:1px solid var(--primary-action); border-radius:9px; color:var(--on-primary); background:var(--primary-action); font-size:11px; font-weight:800; }
 .save:disabled { opacity:.55; cursor:not-allowed; }
 .catalogHint,.status,.error { margin:12px 0 0; color:var(--muted); font-size:10px; line-height:1.55; }
-.error { color:#d25c5c; }
+.error { color:var(--danger); }
 .subjectHeading { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:3px 2px 0; }
 .subjectMark { width:38px; height:38px; border:1px solid var(--line); border-radius:12px; }
 @media(max-width:1000px) { .fields { grid-template-columns:repeat(3,minmax(0,1fr)); } }

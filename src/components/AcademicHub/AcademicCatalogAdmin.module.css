@@ -9,7 +9,7 @@
 .column h3 { margin:0 0 10px; font-size:12px; }
 .column form { display:flex; flex-wrap:wrap; gap:6px; }
 .column input,.column select { flex:1 1 120px; min-width:0; height:34px; padding:7px 9px; border:1px solid var(--line); border-radius:8px; color:var(--text); background:var(--surface); font-size:10px; }
-.column button { display:inline-flex; align-items:center; justify-content:center; gap:4px; min-height:32px; padding:6px 9px; border:1px solid var(--primary); border-radius:8px; color:#fff; background:var(--primary); font-size:10px; font-weight:750; }
+.column button { display:inline-flex; align-items:center; justify-content:center; gap:4px; min-height:32px; padding:6px 9px; border:1px solid var(--primary-action); border-radius:8px; color:var(--on-primary); background:var(--primary-action); font-size:10px; font-weight:750; }
 .column button:disabled { opacity:.5; cursor:not-allowed; }
 .cycleForm input:first-child { flex-basis:100%; }
 .column ul { display:grid; gap:5px; max-height:190px; overflow:auto; margin:10px 0 0; padding:0; list-style:none; }
@@ -17,8 +17,8 @@
 .column li>span { flex:1; min-width:0; overflow-wrap:anywhere; color:var(--text); font-size:10px; font-weight:700; }
 .column li small { display:block; margin-top:3px; color:var(--muted); font-size:9px; font-weight:500; }
 .column li button { width:28px; min-height:28px; padding:5px; border-color:transparent; color:var(--muted); background:transparent; }
-.column li button:last-child { color:#d25c5c; }
-.error { margin:0 0 12px; padding:9px 10px; border:1px solid color-mix(in srgb,#d25c5c 30%,var(--line)); border-radius:8px; color:#d25c5c; font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
+.column li button:last-child { color:var(--danger); }
+.error { margin:0 0 12px; padding:9px 10px; border:1px solid color-mix(in srgb,var(--danger) 30%,var(--line)); border-radius:8px; color:var(--danger); font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
 .note { display:flex; align-items:flex-start; gap:7px; margin:13px 0 0; color:var(--muted); font-size:9px; line-height:1.5; }
 .note svg { flex:none; color:var(--primary); }
 .cancel { display:inline-flex; align-items:center; gap:5px; margin-top:10px; padding:6px 9px; border:1px solid var(--line); border-radius:8px; color:var(--text); background:var(--surface-soft); font-size:10px; }
