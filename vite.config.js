@@ -11,6 +11,7 @@ function loadApiHandler(filename) {
 function localApiPlugin() {
   const routes = {
     "/api/ai": () => loadApiHandler("ai.js"),
+    "/api/admin": () => loadApiHandler("admin.js"),
     "/api/index-book": () => loadApiHandler("index-book.js"),
     "/api/ask-book": () => loadApiHandler("ask-book.js"),
   };

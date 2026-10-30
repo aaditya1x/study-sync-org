@@ -2,6 +2,7 @@
 import { createClient } from "@supabase/supabase-js";
 import PDFParser from "pdf2json";
 import { logApiFailure, missingServerEnv, readServerEnv, reportMissingServerEnv } from "../server/apiDiagnostics.js";
+import { checkActiveAccount } from "../server/userAccess.js";
 
 const supabaseUrl = readServerEnv("SUPABASE_URL", "VITE_SUPABASE_URL");
 const anonKey = readServerEnv(
@@ -147,6 +148,11 @@ export default async function handler(req, res) {
     return res.status(401).json({
       error: "Your session is invalid or expired. Please log in again.",
     });
+  }
+  try {
+    await checkActiveAccount({ url: supabaseUrl, publishableKey: anonKey, token: match[1] });
+  } catch (error) {
+    return res.status(error.status || 503).json({ error: error.message });
   }
 
   const { storage_path } = req.body || {};

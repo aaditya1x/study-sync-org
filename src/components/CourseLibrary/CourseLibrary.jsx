@@ -6,7 +6,7 @@ import { ChapterTracker } from "../ChapterTracker/index.js";
 import { EmptyState } from "../EmptyState/index.js";
 import styles from "./CourseLibrary.module.css";
 
-const COURSE_SELECT_COLUMNS = "id, owner_id, name, title, code, course_code, semester, description, color, created_at, branch_id, academic_cycle_id, year_level";
+const COURSE_SELECT_COLUMNS = "id, owner_id, name, title, code, course_code, semester, description, color, created_at, branch_id, academic_cycle_id, year_level, archived_at";
 
 function courseCode(title, requested, existing) {
   const input = requested.trim().toUpperCase();
@@ -122,6 +122,7 @@ export default function CourseLibrary({
       const { data, error: queryError } = await supabase
         .from("courses")
         .select(COURSE_SELECT_COLUMNS)
+        .is("archived_at", null)
         .order("created_at", { ascending: false });
       if (queryError) throw queryError;
       setCourses((data || []).map(normalizeCourse));

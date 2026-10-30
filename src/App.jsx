@@ -9,6 +9,7 @@ import {
   GraduationCap,
   LayoutDashboard,
   Settings2,
+  ShieldCheck,
 } from "lucide-react";
 
 import { AppShell } from "./components/AppShell/index.js";
@@ -17,6 +18,7 @@ import { Sidebar } from "./components/Sidebar/index.js";
 import { StatCard } from "./components/StatCard/index.js";
 import { CourseLibrary } from "./components/CourseLibrary/index.js";
 import AcademicHub from "./components/AcademicHub/AcademicHub.jsx";
+import AdminDashboard from "./components/AdminDashboard/AdminDashboard.jsx";
 import { MaterialsPanel } from "./components/MaterialsPanel/index.js";
 import { SyllabusLibrary } from "./components/SyllabusLibrary/index.js";
 import { TasksPanel } from "./components/TasksPanel/index.js";
@@ -71,6 +73,7 @@ export default function App() {
   const [courseLoadStatus, setCourseLoadStatus] = useState("loading");
   const [materialLoadStatus, setMaterialLoadStatus] = useState("loading");
   const [chapterProgressByCourse, setChapterProgressByCourse] = useState({});
+  const [platformRole, setPlatformRole] = useState("student");
 
   const userStoragePrefix = session?.userId
     ? `campusflow-${session.userId}`
@@ -125,6 +128,23 @@ export default function App() {
       authListener.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    setPlatformRole("student");
+    if (!supabase || !session?.userId) return () => { active = false; };
+    supabase.from("academic_staff").select("role").eq("user_id", session.userId).maybeSingle()
+      .then(({ data, error }) => {
+        if (error) throw error;
+        if (active) setPlatformRole(data?.role || "student");
+      })
+      .catch((error) => console.error("Could not load the signed-in role:", error));
+    return () => { active = false; };
+  }, [session?.userId]);
+
+  useEffect(() => {
+    if (active === "Admin" && platformRole !== "super_admin") setActive("Dashboard");
+  }, [active, platformRole]);
 
   useEffect(() => {
     setProfilePicture("");
@@ -436,7 +456,10 @@ async function handleLogout() {
     onCourseLoadStatusChange: setCourseLoadStatus,
   };
 
-  const title = navItems.find((item) => item.id === active)?.label || active;
+  const visibleNavItems = platformRole === "super_admin"
+    ? [...navItems, { id: "Admin", label: "Super Admin", icon: ShieldCheck }]
+    : navItems;
+  const title = visibleNavItems.find((item) => item.id === active)?.label || active;
 
   if (authLoading) {
     return <main className={styles.loading} aria-live="polite">Loading your workspace…</main>;
@@ -458,7 +481,7 @@ async function handleLogout() {
       )}
 
       <Sidebar
-        items={navItems}
+        items={visibleNavItems}
         active={active}
         onChange={handleNavigate}
         mobileOpen={mobileNavOpen}
@@ -645,6 +668,8 @@ async function handleLogout() {
             onProfilePictureChange={setProfilePicture}
           />
         )}
+
+        {active === "Admin" && platformRole === "super_admin" && <AdminDashboard notify={notify} />}
       </main>
 
       <Toast message={toast} />

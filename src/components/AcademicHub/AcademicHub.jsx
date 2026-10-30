@@ -31,9 +31,9 @@ export default function AcademicHub(props) {
         if (authError) throw authError;
         if (!auth.user) throw new Error("Sign in again to load your academic allocation.");
         const [degrees, branches, cycles, allocation, staffRole] = await Promise.all([
-          supabase.from("academic_degrees").select("id, name").order("name"),
-          supabase.from("academic_branches").select("id, degree_id, name").order("name"),
-          supabase.from("academic_cycles").select("id, label, starts_on, ends_on").order("label", { ascending: false }),
+          supabase.from("academic_degrees").select("id, name").is("archived_at", null).order("name"),
+          supabase.from("academic_branches").select("id, degree_id, name").is("archived_at", null).order("name"),
+          supabase.from("academic_cycles").select("id, label, starts_on, ends_on").is("archived_at", null).order("label", { ascending: false }),
           supabase.from("academic_profiles").select("degree_id, branch_id, academic_cycle_id, year_level, semester").eq("user_id", auth.user.id).maybeSingle(),
           supabase.from("academic_staff").select("role").eq("user_id", auth.user.id).maybeSingle(),
         ]);
@@ -47,7 +47,7 @@ export default function AcademicHub(props) {
           year_level: allocation.data?.year_level ? String(allocation.data.year_level) : "",
           semester: allocation.data?.semester ? String(allocation.data.semester) : "",
         });
-        setIsAdmin(staffRole.data?.role === "admin");
+        setIsAdmin(staffRole.data?.role === "super_admin");
         setReady(true);
       } catch (loadError) {
         if (active) setError(loadError.message || "Could not load academic allocation.");

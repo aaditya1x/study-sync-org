@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { logApiFailure, missingServerEnv, readServerEnv, reportMissingServerEnv } from "../server/apiDiagnostics.js";
+import { checkActiveAccount } from "../server/userAccess.js";
 
 const supabaseUrl = readServerEnv("SUPABASE_URL", "VITE_SUPABASE_URL");
 const publishableKey = readServerEnv(
@@ -113,6 +114,11 @@ export default async function handler(req, res) {
   const user = authData?.user;
   if (authError || !user) {
     return res.status(401).json({ error: "Your session expired. Please log in again." });
+  }
+  try {
+    await checkActiveAccount({ url: supabaseUrl, publishableKey, token });
+  } catch (error) {
+    return res.status(error.status || 503).json({ error: error.message });
   }
 
   const { storage_path: storagePath, mode, text } = req.body || {};
