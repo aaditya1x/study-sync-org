@@ -5,6 +5,14 @@ const key =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+// Use VITE_SITE_URL in the production deployment. With no configured value, the
+// active browser origin keeps ordinary localhost development convenient.
+// Every resulting URL must also be listed in Supabase Auth > URL Configuration.
+export function getAuthRedirectUrl() {
+  const siteUrl = import.meta.env.VITE_SITE_URL?.trim() || window.location.origin;
+  return `${siteUrl.replace(/\/$/, "")}/auth/callback`;
+}
+
 // This module is intentionally not imported by the app until Supabase credentials are configured.
 export const isSupabaseConfigured = Boolean(url && key && !url.includes("YOUR_PROJECT_ID") && !key.includes("YOUR_SUPABASE"));
 

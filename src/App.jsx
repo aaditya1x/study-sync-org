@@ -97,6 +97,12 @@ export default function App() {
   const taskSaveVersion = useRef(0);
 
   const [profilePicture, setProfilePicture] = useState("");
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
+  const recoveryHash = typeof window === "undefined" ? "" : window.location.hash.replace(/^#/, "");
+  const isPasswordRecoveryFlow = typeof window !== "undefined" && window.location.pathname === "/auth/callback" && (
+    new URLSearchParams(window.location.search).get("type") === "recovery" ||
+    new URLSearchParams(recoveryHash).get("type") === "recovery"
+  );
 
   useEffect(() => {
     if (!supabase) {
@@ -104,9 +110,13 @@ export default function App() {
       return undefined;
     }
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, authSession) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, authSession) => {
       setSession(makeSession(authSession?.user));
       setAuthLoading(false);
+      if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
+      if (event === "SIGNED_OUT") {
+        setProfilePicture("");
+      }
     });
 
     return () => {
@@ -430,8 +440,8 @@ async function handleLogout() {
     return <main className={styles.loading} aria-live="polite">Loading your workspace…</main>;
   }
 
-  if (!session?.authenticated) {
-    return <Login onLogin={handleLogin} />;
+  if (!session?.authenticated || isPasswordRecoveryFlow || passwordRecovery) {
+    return <Login onLogin={handleLogin} initialMode={isPasswordRecoveryFlow || passwordRecovery ? "reset" : undefined} onExitRecovery={() => setPasswordRecovery(false)} />;
   }
 
   return (
