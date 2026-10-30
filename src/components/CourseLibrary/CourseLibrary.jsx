@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, BookOpen, Edit3, Plus, Trash2, X, UploadCloud, FileText, RotateCw } from "lucide-react";
 import { supabase } from "../../lib/supabase.js";
 import { CourseCard } from "../CourseCard/index.js";
+import { ChapterTracker } from "../ChapterTracker/index.js";
 import { EmptyState } from "../EmptyState/index.js";
 import styles from "./CourseLibrary.module.css";
 
-const COURSE_SELECT_COLUMNS = "id, owner_id, name, title, code, course_code, semester, description, color, created_at";
+const COURSE_SELECT_COLUMNS = "id, owner_id, name, title, code, course_code, semester, description, color, created_at, branch_id, academic_cycle_id, year_level";
 
 function courseCode(title, requested, existing) {
   const input = requested.trim().toUpperCase();
@@ -29,6 +30,19 @@ function normalizeCourse(course) {
   };
 }
 
+function organizeChapters(chapters, topics) {
+  const topicsByChapter = new Map();
+  topics.forEach((topic) => {
+    const current = topicsByChapter.get(topic.chapter_id) || [];
+    current.push(topic);
+    topicsByChapter.set(topic.chapter_id, current);
+  });
+  return chapters.map((chapter) => ({
+    ...chapter,
+    topics: (topicsByChapter.get(chapter.id) || []).sort((a, b) => a.position - b.position || a.created_at.localeCompare(b.created_at)),
+  })).sort((a, b) => a.position - b.position || a.created_at.localeCompare(b.created_at));
+}
+
 export default function CourseLibrary({
   courses = [],
   setCourses,
@@ -46,8 +60,14 @@ export default function CourseLibrary({
   autoOpenCreate = false,
   onCreateFormOpened,
   onCourseLoadStatusChange,
+  onChapterProgressChange,
+  academicProfile = {},
+  academicCatalog = { branches: [], cycles: [] },
 }) {
   const [semester, setSemester] = useState("all");
+  const [branchFilter, setBranchFilter] = useState("all");
+  const [cycleFilter, setCycleFilter] = useState("all");
+  const [yearFilter, setYearFilter] = useState("all");
   const [formOpen, setFormOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState(null);
   const [selectedCourseId, setSelectedCourseId] = useState(initialSelectedCourseId);
@@ -61,6 +81,9 @@ export default function CourseLibrary({
   const [coursesLoaded, setCoursesLoaded] = useState(false);
   const [currentUserId, setCurrentUserId] = useState("");
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [chapters, setChapters] = useState([]);
+  const [chapterLoading, setChapterLoading] = useState(false);
+  const [chapterError, setChapterError] = useState("");
 
   useEffect(() => {
     setSelectedCourseId(initialSelectedCourseId || "");
@@ -102,6 +125,29 @@ export default function CourseLibrary({
         .order("created_at", { ascending: false });
       if (queryError) throw queryError;
       setCourses((data || []).map(normalizeCourse));
+      setChapterLoading(true);
+      setChapterError("");
+      try {
+        const { data: chapterRows, error: chapterQueryError } = await supabase
+          .from("course_chapters")
+          .select("id, course_id, title, position, created_at")
+          .eq("user_id", authData.user.id)
+          .order("position", { ascending: true });
+        if (chapterQueryError) throw chapterQueryError;
+        const { data: topicRows, error: topicQueryError } = await supabase
+          .from("course_topics")
+          .select("id, chapter_id, title, position, is_completed, completed_at, created_at")
+          .eq("user_id", authData.user.id)
+          .order("position", { ascending: true });
+        if (topicQueryError) throw topicQueryError;
+        setChapters(organizeChapters(chapterRows || [], topicRows || []));
+      } catch (chapterLoadError) {
+        console.error("Chapter progress loading failed:", chapterLoadError);
+        setChapters([]);
+        setChapterError("Chapter tracking is unavailable until its database migration is applied.");
+      } finally {
+        setChapterLoading(false);
+      }
       onCourseLoadStatusChange?.("loaded");
     } catch (loadError) {
       console.error("Course loading failed:", loadError);
@@ -123,17 +169,131 @@ export default function CourseLibrary({
     return () => { active = false; };
   }, [loadCourses, refreshVersion]);
 
+  const chapterProgressByCourse = useMemo(() => chapters.reduce((result, chapter) => {
+    const current = result[chapter.course_id] || { completed: 0, total: 0 };
+    const total = chapter.topics.length;
+    current.total += total;
+    current.completed += chapter.topics.filter((topic) => topic.is_completed).length;
+    result[chapter.course_id] = current;
+    return result;
+  }, {}), [chapters]);
+
+  useEffect(() => {
+    onChapterProgressChange?.(chapterProgressByCourse);
+  }, [chapterProgressByCourse, onChapterProgressChange]);
+
+  async function mutateChapterProgress(action) {
+    if (!supabase) {
+      setChapterError("Supabase is not configured.");
+      return null;
+    }
+    setChapterLoading(true);
+    setChapterError("");
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      if (!authData.user) throw new Error("Sign in again to update chapter progress.");
+      return await action(authData.user.id);
+    } catch (mutationError) {
+      console.error("Chapter progress update failed:", mutationError);
+      setChapterError(mutationError.message || "Could not save chapter progress.");
+      return null;
+    } finally {
+      setChapterLoading(false);
+    }
+  }
+
+  function createChapter(chapterTitle) {
+    return mutateChapterProgress(async (userId) => {
+      const { data, error: insertError } = await supabase.from("course_chapters")
+        .insert({ course_id: selectedCourseId, user_id: userId, title: chapterTitle, position: chapters.filter((chapter) => String(chapter.course_id) === String(selectedCourseId)).length })
+        .select("id, course_id, title, position, created_at").single();
+      if (insertError) throw insertError;
+      setChapters((current) => [...current, { ...data, topics: [] }]);
+      notify?.("Chapter added.");
+      return data;
+    });
+  }
+
+  function updateChapter(chapterId, chapterTitle) {
+    return mutateChapterProgress(async (userId) => {
+      const { data, error: updateError } = await supabase.from("course_chapters").update({ title: chapterTitle, updated_at: new Date().toISOString() })
+        .eq("id", chapterId).eq("user_id", userId).select("id, title").single();
+      if (updateError) throw updateError;
+      setChapters((current) => current.map((chapter) => chapter.id === data.id ? { ...chapter, title: data.title } : chapter));
+      notify?.("Chapter updated.");
+      return data;
+    });
+  }
+
+  function deleteChapter(chapter) {
+    return mutateChapterProgress(async (userId) => {
+      const { error: deleteError } = await supabase.from("course_chapters").delete().eq("id", chapter.id).eq("user_id", userId);
+      if (deleteError) throw deleteError;
+      setChapters((current) => current.filter((item) => item.id !== chapter.id));
+      notify?.("Chapter and its topics deleted.");
+    });
+  }
+
+  function createTopic(chapterId, topicTitle) {
+    return mutateChapterProgress(async (userId) => {
+      const chapter = chapters.find((item) => item.id === chapterId);
+      const { data, error: insertError } = await supabase.from("course_topics")
+        .insert({ chapter_id: chapterId, user_id: userId, title: topicTitle, position: chapter?.topics.length || 0 })
+        .select("id, chapter_id, title, position, is_completed, completed_at, created_at").single();
+      if (insertError) throw insertError;
+      setChapters((current) => current.map((item) => item.id === chapterId ? { ...item, topics: [...item.topics, data] } : item));
+      notify?.("Topic added.");
+      return data;
+    });
+  }
+
+  function updateTopic(topicId, topicTitle) {
+    return mutateChapterProgress(async (userId) => {
+      const { data, error: updateError } = await supabase.from("course_topics").update({ title: topicTitle, updated_at: new Date().toISOString() })
+        .eq("id", topicId).eq("user_id", userId).select("id, title").single();
+      if (updateError) throw updateError;
+      setChapters((current) => current.map((chapter) => ({ ...chapter, topics: chapter.topics.map((topic) => topic.id === data.id ? { ...topic, title: data.title } : topic) })));
+      notify?.("Topic updated.");
+      return data;
+    });
+  }
+
+  function deleteTopic(topic) {
+    return mutateChapterProgress(async (userId) => {
+      const { error: deleteError } = await supabase.from("course_topics").delete().eq("id", topic.id).eq("user_id", userId);
+      if (deleteError) throw deleteError;
+      setChapters((current) => current.map((chapter) => ({ ...chapter, topics: chapter.topics.filter((item) => item.id !== topic.id) })));
+      notify?.("Topic deleted.");
+    });
+  }
+
+  function toggleTopic(topic) {
+    return mutateChapterProgress(async (userId) => {
+      const isCompleted = !topic.is_completed;
+      const { data, error: updateError } = await supabase.from("course_topics")
+        .update({ is_completed: isCompleted, completed_at: isCompleted ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
+        .eq("id", topic.id).eq("user_id", userId).select("id, is_completed, completed_at").single();
+      if (updateError) throw updateError;
+      setChapters((current) => current.map((chapter) => ({ ...chapter, topics: chapter.topics.map((item) => item.id === data.id ? { ...item, ...data } : item) })));
+      return data;
+    });
+  }
+
   const visible = useMemo(() => courses.filter((course) =>
     (semester === "all" || String(course.semester) === semester)
+    && (branchFilter === "all" || String(course.branch_id || "") === branchFilter)
+    && (cycleFilter === "all" || String(course.academic_cycle_id || "") === cycleFilter)
+    && (yearFilter === "all" || String(course.year_level || "") === yearFilter)
     && `${course.name} ${course.code} ${course.description || ""}`.toLowerCase().includes(query.toLowerCase())
-  ), [courses, semester, query]);
+  ), [courses, semester, branchFilter, cycleFilter, yearFilter, query]);
 
   function startCreate() {
     setEditingCourse(null);
     setTitle("");
     setCode("");
     setDescription("");
-    setSemesterValue("1");
+    setSemesterValue(academicProfile.semester || "1");
     setError("");
     setFormOpen(true);
   }
@@ -194,6 +354,9 @@ export default function CourseLibrary({
         code: cleanCode,
         course_code: cleanCode,
         semester: Number(semesterValue),
+        branch_id: academicProfile.branch_id || null,
+        academic_cycle_id: academicProfile.academic_cycle_id || null,
+        year_level: academicProfile.year_level ? Number(academicProfile.year_level) : null,
         description: description.trim(),
       };
 
@@ -288,6 +451,18 @@ export default function CourseLibrary({
           <div><strong>{linkedTasks.length}</strong><span>Tasks</span></div>
           <div><strong>{progress}%</strong><span>Task completion</span></div>
         </div>
+        <ChapterTracker
+          chapters={chapters.filter((chapter) => String(chapter.course_id) === String(selectedCourse.id))}
+          loading={chapterLoading}
+          error={chapterError}
+          onCreateChapter={createChapter}
+          onUpdateChapter={updateChapter}
+          onDeleteChapter={deleteChapter}
+          onCreateTopic={createTopic}
+          onUpdateTopic={updateTopic}
+          onDeleteTopic={deleteTopic}
+          onToggleTopic={toggleTopic}
+        />
         <div className={styles.detailSectionHead}>
           <div><h3>Course materials</h3><p>Files linked to this course.</p></div>
           <button type="button" className={styles.primaryAction} onClick={() => onUploadMaterial?.(selectedCourse.id)}><UploadCloud size={14} /> Upload material</button>
@@ -319,7 +494,8 @@ export default function CourseLibrary({
   function renderCourseForm() {
     return (
       <form className={styles.addForm} onSubmit={saveCourse}>
-        <div className={styles.formHeading}><h3>{editingCourse ? "Edit course" : "Create a course"}</h3><button type="button" onClick={closeForm} aria-label="Close course form"><X size={16} /></button></div>
+        <div className={styles.formHeading}><h3>{editingCourse ? "Edit subject" : "Add a subject"}</h3><button type="button" onClick={closeForm} aria-label="Close course form"><X size={16} /></button></div>
+        <p className={styles.academicNote}>{academicProfile.branch_id ? "This subject will be categorized under your saved degree, branch, academic year and year." : "Set your academic allocation above to categorize this subject by branch and year."}</p>
         <div className={styles.formGrid}>
           <label>Course name<input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Database Management Systems" maxLength={100} required /></label>
           <label>Course code <span>(optional)</span><input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Generated from course name when blank" maxLength={16} /></label>
@@ -337,8 +513,13 @@ export default function CourseLibrary({
       <div className={styles.header}>
         <div><h2>{compact ? "College courses" : "Course library"}</h2><p>{compact ? "Browse shared subjects and semesters" : "Browse college subjects; create and manage your own courses."}</p></div>
         <div className={styles.controls}>
-          {!compact && <select value={semester} onChange={(event) => setSemester(event.target.value)} aria-label="Filter courses by semester"><option value="all">All semesters</option>{Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={String(index + 1)}>Semester {index + 1}</option>)}</select>}
-          <button type="button" onClick={formOpen ? closeForm : startCreate} className={styles.add}><Plus size={15} /><span>{formOpen ? "Close" : "Add course"}</span></button>
+          {!compact && <>
+            <select value={branchFilter} onChange={(event) => setBranchFilter(event.target.value)} aria-label="Filter by branch"><option value="all">All branches</option>{academicCatalog.branches.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+            <select value={cycleFilter} onChange={(event) => setCycleFilter(event.target.value)} aria-label="Filter by academic year"><option value="all">All academic years</option>{academicCatalog.cycles.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
+            <select value={yearFilter} onChange={(event) => setYearFilter(event.target.value)} aria-label="Filter by year"><option value="all">All years</option>{Array.from({ length: 6 }, (_, index) => <option key={index + 1} value={String(index + 1)}>Year {index + 1}</option>)}</select>
+            <select value={semester} onChange={(event) => setSemester(event.target.value)} aria-label="Filter by semester"><option value="all">All semesters</option>{Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={String(index + 1)}>Semester {index + 1}</option>)}</select>
+          </>}
+          <button type="button" onClick={formOpen ? closeForm : startCreate} className={styles.add}><Plus size={15} /><span>{formOpen ? "Close" : "Add subject"}</span></button>
           {compact && <button type="button" className={styles.viewAll} onClick={onViewAll}>View all</button>}
           {!compact && <button type="button" className={styles.refresh} onClick={() => setRefreshVersion((value) => value + 1)} disabled={loading} aria-label="Refresh courses"><RotateCw size={15} /></button>}
         </div>
@@ -354,7 +535,9 @@ export default function CourseLibrary({
           const courseMaterials = materials.filter((item) => String(item.courseId || item.course_id || "") === String(course.id)).length;
           const courseTasks = tasks.filter((task) => String(task.courseId || "") === String(course.id));
           const progress = courseTasks.length ? Math.round(courseTasks.filter((task) => task.completed).length / courseTasks.length * 100) : 0;
-          return <CourseCard key={course.id} course={{ ...course, materials: courseMaterials, progress, progressTasks: courseTasks.length }} canManage={course.owner_id === currentUserId} onOpen={() => onOpenCourse ? onOpenCourse(course.id) : setSelectedCourseId(course.id)} onDelete={setDeleteTarget} />;
+          const branchName = academicCatalog.branches.find((item) => item.id === course.branch_id)?.name;
+          const cycleLabel = academicCatalog.cycles.find((item) => item.id === course.academic_cycle_id)?.label;
+          return <CourseCard key={course.id} course={{ ...course, branchName, cycleLabel, materials: courseMaterials, progress, progressTasks: courseTasks.length, chapterProgress: chapterProgressByCourse[course.id] || { completed: 0, total: 0 } }} canManage={course.owner_id === currentUserId} onOpen={() => onOpenCourse ? onOpenCourse(course.id) : setSelectedCourseId(course.id)} onDelete={setDeleteTarget} />;
         })}
       </div>
       {!loading && !error && !visible.length && <EmptyState icon={BookOpen} title={query ? "No matching courses" : "No courses yet"} description={query ? "Try another search." : "Create your first course to organize materials, assignments, and progress."} />}

@@ -16,6 +16,7 @@ import { Navbar } from "./components/Navbar/index.js";
 import { Sidebar } from "./components/Sidebar/index.js";
 import { StatCard } from "./components/StatCard/index.js";
 import { CourseLibrary } from "./components/CourseLibrary/index.js";
+import AcademicHub from "./components/AcademicHub/AcademicHub.jsx";
 import { MaterialsPanel } from "./components/MaterialsPanel/index.js";
 import { SyllabusLibrary } from "./components/SyllabusLibrary/index.js";
 import { TasksPanel } from "./components/TasksPanel/index.js";
@@ -36,14 +37,14 @@ import {
 import styles from "./App.module.css";
 
 const navItems = [
-  { id: "Dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "Courses", label: "Courses", icon: BookOpen },
-  { id: "Materials", label: "Study Materials", icon: FileText },
+  { id: "Dashboard", label: "Command Center", icon: LayoutDashboard },
+  { id: "Courses", label: "Academic Hub", icon: BookOpen },
+  { id: "Materials", label: "Knowledge Vault", icon: FileText },
   { id: "Syllabus", label: "Syllabus Library", icon: GraduationCap },
   { id: "Tasks", label: "Tasks & Assignments", icon: CheckSquare },
-  { id: "AI Tools", label: "AI Study Tools", icon: BrainCircuit },
-  { id: "Progress", label: "Progress Report", icon: ChartNoAxesCombined },
-  { id: "Settings", label: "Settings", icon: Settings2 },
+  { id: "AI Tools", label: "AI Learning Lab", icon: BrainCircuit },
+  { id: "Progress", label: "Performance Intelligence", icon: ChartNoAxesCombined },
+  { id: "Settings", label: "Personal Space", icon: Settings2 },
 ];
 
 function makeSession(user) {
@@ -69,6 +70,7 @@ export default function App() {
   const [uploadMaterialRequest, setUploadMaterialRequest] = useState({ open: false, courseId: "" });
   const [courseLoadStatus, setCourseLoadStatus] = useState("loading");
   const [materialLoadStatus, setMaterialLoadStatus] = useState("loading");
+  const [chapterProgressByCourse, setChapterProgressByCourse] = useState({});
 
   const userStoragePrefix = session?.userId
     ? `campusflow-${session.userId}`
@@ -552,6 +554,7 @@ async function handleLogout() {
                 onOpenCourse={openCourse}
                 onViewAll={() => setActive("Courses")}
                 onCourseLoadStatusChange={setCourseLoadStatus}
+                onChapterProgressChange={setChapterProgressByCourse}
               />
 
               <div className={styles.rightColumn}>
@@ -585,7 +588,7 @@ async function handleLogout() {
           </>
         )}
 
-        {active === "Courses" && <CourseLibrary
+        {active === "Courses" && <AcademicHub
           {...shared}
           materials={materials}
           initialSelectedCourseId={selectedCourseId}
@@ -593,6 +596,7 @@ async function handleLogout() {
           autoOpenCreate={createCourseRequested}
           onCreateFormOpened={clearCourseRequest}
           onCourseLoadStatusChange={setCourseLoadStatus}
+          onChapterProgressChange={setChapterProgressByCourse}
         />}
 
         {active === "Materials" && <MaterialsPanel
@@ -629,6 +633,7 @@ async function handleLogout() {
             courses={courses}
             tasks={tasks}
             materials={materials}
+            chapterProgressByCourse={chapterProgressByCourse}
           />
         )}
 

@@ -1,34 +1,51 @@
-import { ChartNoAxesCombined, CheckCircle2, BookOpen, FileText, ListTodo } from "lucide-react";
+import { ChartNoAxesCombined, BookOpen, FileText, ListTodo } from "lucide-react";
 import { StatCard } from "../StatCard/index.js";
 import styles from "./ProgressReport.module.css";
 
-export default function ProgressReport({courses,tasks,materials}) {
+function percentage(completed, total) {
+  if (!total) return 0;
+  return completed === total ? 100 : Math.round((completed / total) * 100);
+}
+
+export default function ProgressReport({ courses, tasks, materials, chapterProgressByCourse = {} }) {
   const totalTasks = tasks.length;
-  const completedTasks = tasks.filter(task => task.completed).length;
-  // Guard empty task lists; clamp the percentage and explicitly show 100% when all tasks are done.
-  const taskProgress = totalTasks === 0
-    ? 0
-    : completedTasks === totalTasks
-      ? 100
-      : Math.round((completedTasks / totalTasks) * 100);
+  const completedTasks = tasks.filter((task) => task.completed).length;
+  const taskProgress = percentage(completedTasks, totalTasks);
   const courseProgress = courses.map((course) => {
     const linked = tasks.filter((task) => String(task.courseId || "") === String(course.id));
-    return { ...course, taskCount: linked.length, actualProgress: linked.length ? Math.round(linked.filter((task) => task.completed).length / linked.length * 100) : 0 };
+    const chapterProgress = chapterProgressByCourse[course.id] || { completed: 0, total: 0 };
+    return {
+      ...course,
+      taskCount: linked.length,
+      actualProgress: percentage(linked.filter((task) => task.completed).length, linked.length),
+      chapterProgress,
+      chapterPercent: percentage(chapterProgress.completed, chapterProgress.total),
+    };
   });
-  const average=courseProgress.length?Math.round(courseProgress.reduce((sum,course)=>sum+course.actualProgress,0)/courseProgress.length):0;
+  const averageTaskProgress = courseProgress.length
+    ? Math.round(courseProgress.reduce((sum, course) => sum + course.actualProgress, 0) / courseProgress.length)
+    : 0;
+  const totalTopics = courseProgress.reduce((sum, course) => sum + course.chapterProgress.total, 0);
+  const completedTopics = courseProgress.reduce((sum, course) => sum + course.chapterProgress.completed, 0);
+  const overallChapterProgress = percentage(completedTopics, totalTopics);
 
   return <section className={styles.page}>
-    <div className={styles.heading}><p>YOUR GROWTH</p><h1>Progress report</h1><span>Review your course progress and task completion.</span></div>
+    <div className={styles.heading}><p>YOUR GROWTH</p><h1>Progress report</h1><span>Review chapter progress and task completion separately.</span></div>
     <div className={styles.stats}>
       <StatCard label="Task completion" value={`${taskProgress}%`} note={`${completedTasks} of ${totalTasks} tasks completed`} icon={ListTodo} tint="purple"/>
-      <StatCard label="Average course progress" value={`${average}%`} note="Across shared courses using your tasks" icon={ChartNoAxesCombined} tint="green"/>
+      <StatCard label="Average task progress" value={`${averageTaskProgress}%`} note="Across courses with assigned tasks" icon={ChartNoAxesCombined} tint="green"/>
+      <StatCard label="Chapter progress" value={`${overallChapterProgress}%`} note={`${completedTopics} of ${totalTopics} personal topics complete`} icon={BookOpen} tint="blue"/>
       <StatCard label="Available courses" value={courses.length} note="College study library" icon={BookOpen} tint="blue"/>
       <StatCard label="Materials available" value={materials.length} note="Shared files and your private uploads" icon={FileText} tint="orange"/>
     </div>
     <div className={styles.panel}>
-      <div className={styles.taskProgressHeading}><div><h2>Overall task completion</h2><p>{totalTasks===0?"Add a task to start tracking progress.":taskProgress===100?"Excellent — every task is complete!":"Keep going; every completed task moves you forward."}</p></div><strong>{taskProgress}%</strong></div>
-      <div className={styles.taskProgressTrack} role="progressbar" aria-label="Overall task completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={taskProgress}><span style={{width:`${taskProgress}%`}}/></div>
+      <div className={styles.taskProgressHeading}><div><h2>Overall task completion</h2><p>{totalTasks === 0 ? "Add a task to start tracking progress." : taskProgress === 100 ? "Every task is complete." : "Keep going; each completed task moves you forward."}</p></div><strong>{taskProgress}%</strong></div>
+      <div className={styles.taskProgressTrack} role="progressbar" aria-label="Overall task completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={taskProgress}><span style={{ width: `${taskProgress}%` }}/></div>
     </div>
-    <div className={styles.panel}><h2>Course completion</h2><p>Each percentage uses this course’s assigned tasks; courses without tasks start at 0%.</p>{courseProgress.map(c=><div className={styles.course} key={c.id}><div className={styles.courseHead}><strong>{c.name}</strong><b>{c.actualProgress}%</b></div><div className={styles.track} role="progressbar" aria-label={`${c.name} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={c.actualProgress}><span style={{width:`${Math.min(100,Math.max(0,c.actualProgress))}%`}}/></div><small>{c.code} · Semester {c.semester} · {c.taskCount} linked tasks</small></div>)}</div>
+    <div className={styles.panel}>
+      <div className={styles.taskProgressHeading}><div><h2>Overall chapter progress</h2><p>{totalTopics ? `${completedTopics} of ${totalTopics} personal topics complete` : "Add chapters and topics in a course to start tracking."}</p></div><strong>{overallChapterProgress}%</strong></div>
+      <div className={styles.taskProgressTrack} role="progressbar" aria-label="Overall chapter progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={overallChapterProgress}><span style={{ width: `${overallChapterProgress}%` }}/></div>
+    </div>
+    <div className={styles.panel}><h2>Course completion</h2><p>Task progress and personal chapter progress use separate counts.</p>{courseProgress.map((course) => <div className={styles.course} key={course.id}><div className={styles.courseHead}><strong>{course.name}</strong><span>Tasks {course.actualProgress}% · Chapters {course.chapterPercent}%</span></div><div className={styles.courseProgress}><div className={styles.track} role="progressbar" aria-label={`${course.name} task completion`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={course.actualProgress}><span style={{ width: `${course.actualProgress}%` }}/></div><div className={styles.track} role="progressbar" aria-label={`${course.name} chapter progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={course.chapterPercent}><span style={{ width: `${course.chapterPercent}%` }}/></div></div><small>{course.code} · Semester {course.semester} · {course.taskCount} linked tasks · {course.chapterProgress.completed} of {course.chapterProgress.total} topics</small></div>)}</div>
   </section>;
 }

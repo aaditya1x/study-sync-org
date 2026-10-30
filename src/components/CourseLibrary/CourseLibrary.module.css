@@ -2,7 +2,7 @@
 .header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:17px; }
 .header h2 { margin:0; font-size:16px; letter-spacing:-.3px; }
 .header p { margin:5px 0 0; color:var(--muted); font-size:11px; }
-.controls,.detailActions,.formActions { display:flex; align-items:center; gap:8px; }
+.controls,.detailActions,.formActions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .controls select,.formGrid input,.formGrid select,.formGrid textarea { min-width:0; padding:10px 11px; border:1px solid var(--line); border-radius:9px; background:var(--surface); color:var(--text); font-size:12px; }
 .add,.refresh,.back,.primaryAction,.secondaryAction,.dangerAction,.viewAll { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:36px; padding:8px 11px; border:1px solid var(--line); border-radius:9px; background:var(--surface); color:var(--text); font-size:11px; font-weight:750; cursor:pointer; }
 .add,.primaryAction { border-color:var(--primary); background:var(--primary); color:white; }
@@ -21,6 +21,7 @@
 .formGrid textarea { resize:vertical; }
 .descriptionField { grid-column:1/-1; }
 .formError { margin:10px 0 0; color:#c94242; font-size:11px; line-height:1.5; overflow-wrap:anywhere; }
+.academicNote { margin:-3px 0 12px; color:var(--muted); font-size:10px; line-height:1.5; }
 .formActions { margin-top:13px; }
 .loading { padding:10px 0; color:var(--muted); font-size:12px; }
 .loadError { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin:0 0 14px; padding:12px; border:1px solid color-mix(in srgb,#dc5555 35%,var(--line)); border-radius:10px; color:#bf4141; background:color-mix(in srgb,#dc5555 7%,var(--surface)); font-size:11px; }
@@ -57,7 +58,7 @@
   .panel { padding:14px; }
   .header { align-items:flex-start; flex-direction:column; }
   .controls { width:100%; }
-  .controls select { flex:1; }
+  .controls select { flex:1 1 calc(50% - 8px); }
   .grid { grid-template-columns:1fr; }
   .detailTop { align-items:flex-start; flex-direction:column; }
   .detailActions { width:100%; }

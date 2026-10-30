@@ -12,6 +12,8 @@
 .track { height:6px; overflow:hidden; border-radius:99px; background:var(--line); }
 .track span { display:block; height:100%; border-radius:inherit; background:var(--primary); transition:width .2s ease; }
 .progressNote { min-height:14px; margin:6px 0 0; color:var(--muted); font-size:9px; }
+.academicMeta { margin:5px 0 0; color:var(--primary); font-size:9px; line-height:1.5; }
+.chapterProgress { margin-top:13px; padding-top:12px; border-top:1px solid var(--line); }
 .actions { display:flex; align-items:center; gap:7px; margin-top:auto; padding-top:14px; }
 .open { display:flex; flex:1; align-items:center; justify-content:center; gap:6px; min-height:34px; padding:8px; border:0; border-radius:9px; background:var(--primary-soft); color:var(--primary); font-size:10px; font-weight:800; cursor:pointer; }
 .open:hover { filter:brightness(.97); }
