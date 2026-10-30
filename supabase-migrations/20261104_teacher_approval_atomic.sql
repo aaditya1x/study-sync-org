@@ -172,10 +172,12 @@ begin
 
   select p.degree_id into v_degree_id
   from public.academic_profiles p where p.user_id = p_target_id for update;
-  if not found or v_degree_id is null or not exists (
-    select 1 from public.academic_degrees d
-    where d.id = v_degree_id and d.archived_at is null
-  ) then
+  if not found or v_degree_id is null then
+    raise exception 'The student must have an active selected degree.' using errcode = '23514';
+  end if;
+  perform 1 from public.academic_degrees d
+  where d.id = v_degree_id and d.archived_at is null for share;
+  if not found then
     raise exception 'The student must have an active selected degree.' using errcode = '23514';
   end if;
 
@@ -263,15 +265,13 @@ begin
 
   select p.degree_id into v_degree_id
   from public.academic_profiles p where p.user_id = p_target_id for update;
-  if not found or v_degree_id is null or not exists (
-    select 1 from public.academic_degrees d where d.id = v_degree_id and d.archived_at is null
-  ) then
+  if not found or v_degree_id is null then
     raise exception 'The teacher must have an active selected degree.' using errcode = '23514';
   end if;
-  select s.role into v_target_role
-  from public.academic_staff s where s.user_id = p_target_id for update;
-  if not found or v_target_role <> 'teacher' then
-    raise exception 'Only an existing teacher can have branch assignments changed.' using errcode = '23514';
+  perform 1 from public.academic_degrees d
+  where d.id = v_degree_id and d.archived_at is null for share;
+  if not found then
+    raise exception 'The selected degree is archived or unavailable.' using errcode = '23514';
   end if;
 
   select array_agg(distinct r.branch_id order by r.branch_id)
@@ -285,6 +285,12 @@ begin
     where b.id is null
   ) then
     raise exception 'Every branch must be active and belong to the selected degree.' using errcode = '23514';
+  end if;
+
+  select s.role into v_target_role
+  from public.academic_staff s where s.user_id = p_target_id for update;
+  if not found or v_target_role <> 'teacher' then
+    raise exception 'Only an existing teacher can have branch assignments changed.' using errcode = '23514';
   end if;
 
   for v_branch_id in
@@ -369,6 +375,22 @@ begin
 end;
 $$;
 
+-- Every write to a relationship/catalog table takes the shared advisory lock
+-- before PostgreSQL locks rows for the statement. Managed RPCs take it first
+-- as well. Direct transaction code must not lock these rows before its DML;
+-- a statement trigger cannot undo locks already taken by its caller.
+create or replace function public.lock_teacher_catalog_mutation()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+begin
+  perform pg_advisory_xact_lock(7710064291::bigint);
+  return null; -- ignored for a statement-level trigger
+end;
+$$;
+
 -- Integrity: assignments always match an active teacher profile degree.
 create or replace function public.guard_teacher_branch_assignment()
 returns trigger
@@ -392,19 +414,23 @@ begin
   if not found or v_degree_id is null then
     raise exception 'Teacher must have a selected degree.' using errcode = '23514';
   end if;
+  -- Lock order after the shared advisory lock: profile -> degree -> branch -> staff.
+  select d.archived_at into v_degree_archived
+  from public.academic_degrees d where d.id = v_degree_id for share;
+  if not found or v_degree_archived is not null then
+    raise exception 'Teacher degree must be active.' using errcode = '23514';
+  end if;
+  select b.degree_id, b.archived_at
+    into v_branch_degree, v_branch_archived
+  from public.academic_branches b where b.id = new.branch_id for share;
+  if not found or v_branch_archived is not null
+     or v_branch_degree is distinct from v_degree_id then
+    raise exception 'Branch must be active and belong to the teacher degree.' using errcode = '23514';
+  end if;
   select s.role into v_role from public.academic_staff s
   where s.user_id = new.user_id for update;
   if not found or v_role <> 'teacher' then
     raise exception 'Branch assignments are allowed only for teachers.' using errcode = '23514';
-  end if;
-  select b.degree_id, b.archived_at, d.archived_at
-    into v_branch_degree, v_branch_archived, v_degree_archived
-  from public.academic_branches b
-  join public.academic_degrees d on d.id = b.degree_id
-  where b.id = new.branch_id for share of b, d;
-  if not found or v_branch_archived is not null or v_degree_archived is not null
-     or v_branch_degree is distinct from v_degree_id then
-    raise exception 'Branch must be active and belong to the teacher degree.' using errcode = '23514';
   end if;
   return new;
 end;
@@ -434,6 +460,21 @@ security definer
 set search_path = pg_catalog, public
 as $$
 begin
+  -- Statement-level lock is acquired before this profile row is changed.
+  -- Profile degree validation then locks the selected degree in the shared
+  -- order (profile -> degree), serializing it with degree archival.
+  if tg_op = 'INSERT' then
+    -- Existing profile setup permits degree_id NULL while onboarding. When a
+    -- degree is supplied, require it to exist and remain active through commit.
+    if new.degree_id is not null then
+      perform 1 from public.academic_degrees d
+      where d.id = new.degree_id and d.archived_at is null for share;
+      if not found then
+        raise exception 'Selected degree must be active.' using errcode = '23514';
+      end if;
+    end if;
+    return new;
+  end if;
   if tg_op = 'DELETE' then
     if exists (select 1 from public.academic_staff s join public.academic_staff_branches sb using (user_id)
                where s.user_id = old.user_id and s.role = 'teacher') then
@@ -449,10 +490,12 @@ begin
                  where s.user_id = old.user_id and s.role = 'teacher') then
     raise exception 'Teacher degree changes require a separately reviewed reassignment workflow.' using errcode = '23514';
   end if;
-  if new.degree_id is not null and not exists (
-      select 1 from public.academic_degrees d where d.id = new.degree_id and d.archived_at is null
-  ) then
-    raise exception 'Selected degree must be active.' using errcode = '23514';
+  if new.degree_id is not null then
+    perform 1 from public.academic_degrees d
+    where d.id = new.degree_id and d.archived_at is null for share;
+    if not found then
+      raise exception 'Selected degree must be active.' using errcode = '23514';
+    end if;
   end if;
   return new;
 end;
@@ -481,6 +524,13 @@ security definer
 set search_path = pg_catalog, public
 as $$
 begin
+  -- The statement-level advisory lock is held before the branch row lock.
+  -- Validate every INSERT that creates an active branch and every update that
+  -- changes degree_id or archived_at. In particular, reactivation validates
+  -- NEW.degree_id so a combined reclassification/unarchive cannot bypass this.
+  if new.archived_at is not null then
+    return new;
+  end if;
   perform 1 from public.academic_degrees d
   where d.id = new.degree_id and d.archived_at is null for share;
   if not found then raise exception 'A branch must belong to an active degree.' using errcode = '23514'; end if;
@@ -508,6 +558,21 @@ end;
 $$;
 
 drop trigger if exists teacher_branch_assignment_guard on public.academic_staff_branches;
+drop trigger if exists teacher_catalog_lock_profiles on public.academic_profiles;
+create trigger teacher_catalog_lock_profiles before insert or update or delete on public.academic_profiles
+for each statement execute function public.lock_teacher_catalog_mutation();
+drop trigger if exists teacher_catalog_lock_degrees on public.academic_degrees;
+create trigger teacher_catalog_lock_degrees before insert or update or delete on public.academic_degrees
+for each statement execute function public.lock_teacher_catalog_mutation();
+drop trigger if exists teacher_catalog_lock_branches on public.academic_branches;
+create trigger teacher_catalog_lock_branches before insert or update or delete on public.academic_branches
+for each statement execute function public.lock_teacher_catalog_mutation();
+drop trigger if exists teacher_catalog_lock_assignments on public.academic_staff_branches;
+create trigger teacher_catalog_lock_assignments before insert or update or delete on public.academic_staff_branches
+for each statement execute function public.lock_teacher_catalog_mutation();
+drop trigger if exists teacher_catalog_lock_staff on public.academic_staff;
+create trigger teacher_catalog_lock_staff before insert or update or delete on public.academic_staff
+for each statement execute function public.lock_teacher_catalog_mutation();
 create trigger teacher_branch_assignment_guard before insert or update on public.academic_staff_branches
 for each row execute function public.guard_teacher_branch_assignment();
 drop trigger if exists teacher_staff_branch_count_check on public.academic_staff;
@@ -517,7 +582,7 @@ drop trigger if exists teacher_assignment_branch_count_check on public.academic_
 create constraint trigger teacher_assignment_branch_count_check after insert or update or delete on public.academic_staff_branches
 deferrable initially deferred for each row execute function public.assert_teacher_has_branch();
 drop trigger if exists teacher_profile_degree_guard on public.academic_profiles;
-create trigger teacher_profile_degree_guard before update or delete on public.academic_profiles
+create trigger teacher_profile_degree_guard before insert or update or delete on public.academic_profiles
 for each row execute function public.guard_teacher_profile_degree();
 drop trigger if exists teacher_profile_branch_count_check on public.academic_profiles;
 create constraint trigger teacher_profile_branch_count_check after update or delete on public.academic_profiles
@@ -531,7 +596,7 @@ drop trigger if exists branch_active_degree_update_guard on public.academic_bran
 create trigger branch_active_degree_insert_guard before insert on public.academic_branches
 for each row execute function public.guard_branch_active_degree();
 drop trigger if exists branch_active_degree_update_guard on public.academic_branches;
-create trigger branch_active_degree_update_guard before update of degree_id on public.academic_branches
+create trigger branch_active_degree_update_guard before update of degree_id, archived_at on public.academic_branches
 for each row execute function public.guard_branch_active_degree();
 drop trigger if exists assigned_degree_archive_guard on public.academic_degrees;
 create trigger assigned_degree_archive_guard before update on public.academic_degrees
@@ -543,6 +608,7 @@ alter function public.set_platform_user_role(uuid, uuid, text) owner to postgres
 alter function public.approve_teacher_with_branches(uuid, uuid[]) owner to postgres;
 alter function public.set_teacher_branches(uuid, uuid[]) owner to postgres;
 alter function public.set_platform_user_suspension(uuid, boolean, text) owner to postgres;
+alter function public.lock_teacher_catalog_mutation() owner to postgres;
 alter function public.guard_teacher_branch_assignment() owner to postgres;
 alter function public.assert_teacher_has_branch() owner to postgres;
 alter function public.guard_teacher_profile_degree() owner to postgres;
@@ -555,6 +621,7 @@ grant execute on function public.set_platform_user_role(uuid, uuid, text) to ser
 revoke all on function public.approve_teacher_with_branches(uuid, uuid[]) from public, anon, service_role;
 revoke all on function public.set_teacher_branches(uuid, uuid[]) from public, anon, service_role;
 revoke all on function public.set_platform_user_suspension(uuid, boolean, text) from public, anon, service_role;
+revoke all on function public.lock_teacher_catalog_mutation() from public, anon, authenticated, service_role;
 grant execute on function public.approve_teacher_with_branches(uuid, uuid[]) to authenticated;
 grant execute on function public.set_teacher_branches(uuid, uuid[]) to authenticated;
 grant execute on function public.set_platform_user_suspension(uuid, boolean, text) to authenticated;
@@ -571,6 +638,15 @@ revoke all on function public.guard_assigned_degree_archive() from public, anon,
 revoke insert, update, delete, truncate, references, trigger
   on public.academic_staff, public.academic_staff_branches, public.platform_user_status
   from service_role;
+-- TRUNCATE does not fire INSERT/UPDATE/DELETE triggers (including statement
+-- triggers above), and TRUNCATE CASCADE can remove dependent rows without the
+-- row-level audit path. Deny it to browser/service roles on every protected
+-- relationship, catalog, status, and audit table. Table owners/superusers
+-- remain privileged and must be excluded from application credentials.
+revoke truncate on public.academic_profiles, public.academic_degrees,
+  public.academic_branches, public.academic_staff, public.academic_staff_branches,
+  public.platform_user_status, public.platform_audit_logs
+  from public, anon, authenticated, service_role;
 grant select on public.academic_staff, public.academic_staff_branches, public.platform_user_status
   to service_role;
 

@@ -1,0 +1,218 @@
+# Teacher Suspension and Restoration — Concurrency Design
+
+**Status: REVIEW ONLY — NOT APPROVED FOR EXECUTION.** This document and the companion SQL file are design artifacts. No application code, database, RLS, Supabase project, or deployment configuration was changed. No SQL was executed.
+
+## 1. Goal and security invariant
+
+The existing `public.platform_user_status` row remains the database access-blocking latch. Once a suspension claim commits, the target remains suspended until a restoration operation has confirmed the Auth unban and atomically removes that latch. An uncertain operation never clears the latch. Every API, Postgres/RLS, and Storage request must fail closed if the latch is present or cannot be checked.
+
+The Auth ban is a secondary sign-in control. It is not the access authority: Supabase documents that a temporary ban blocks sign-in but does not revoke already-issued JWTs. The database latch must protect still-valid JWTs. [Supabase user management](https://supabase.com/docs/guides/auth/managing-user-data)
+
+The companion [SQL proposal](../supabase-migrations/20261105_teacher_suspension_operations_draft.sql) is a separately review-only migration draft. The [API state-machine contract](TEACHER_SUSPENSION_API_STATE_MACHINE.md) and [barrier-based concurrent test plan](TEACHER_SUSPENSION_CONCURRENCY_TEST_PLAN.md) are separate artifacts. None is approval to implement or apply before the blockers in Section 9 are resolved.
+
+## 2. Local architecture checked
+
+Local migrations define `platform_user_status(user_id, suspended_at, suspended_by, reason, created_at)` with a primary key on `user_id`, and `platform_audit_logs(id, actor_id, action, entity_type, entity_id, metadata, created_at)`. `is_current_user_active()` returns false when the current UID has a status row. Existing RLS policies and the restrictive Storage policy call that function. The current teacher approval migration's `set_platform_user_suspension` uses advisory lock `7710064291`, locks actor/target Auth rows, and changes the latch and audit row in one RPC transaction.
+
+The current API helper coordinates separate Auth Admin and Postgres calls. Its database transaction lock ends before the Auth operation, so it cannot serialize opposing requests across API instances. The new design replaces that helper/RPC protocol; it does not enable or change Admin UI actions.
+
+### Access-path inventory requiring enforcement
+
+Static inspection found these paths. This is a repository inventory, not a deployed/live inventory:
+
+| Path | Current behavior and required gate |
+|---|---|
+| Direct authenticated PostgREST reads/writes to academic tables | Relevant local RLS policies use `is_current_user_active()`. Confirm every table/policy in staging uses the restrictive active-account policy; do not assume policy composition from local files. |
+| Direct Storage object operations | Local restrictive `storage.objects` policy checks `is_current_user_active()` for `study-materials` and `profile-photos`. Verify actual bucket visibility and all effective permissive/restrictive policies. Public buckets bypass read RLS. |
+| `api/ai.js`, `api/ask-book.js`, `api/index-book.js` | These service-backed handlers call `server/userAccess.js::checkActiveAccount`; retain the check before privileged reads, model work, downloads, or writes, and fail closed on error. Audit all new API routes before release. |
+| `api/admin.js` | Verify the active Super Admin for the caller and use the operation RPC for target suspension. Service-role reads/writes bypass ordinary RLS; do not treat RLS as a gate for these operations. |
+| Browser direct Supabase calls | `App.jsx`, Academic Hub/Profile, Course Library, Materials Panel, Settings, and other direct table/Storage calls rely on Postgres/Storage RLS. Check the status latch for each protected path. |
+| Already issued Storage signed URLs | A signed URL is a bearer capability and is not checked against the caller's current database status on every use. Supabase documents that signed URLs cannot be individually revoked and remain valid until expiry; Smart CDN caching can extend delivery past nominal expiry. [Downloads](https://supabase.com/docs/guides/storage/serving/downloads), [Smart CDN](https://supabase.com/docs/guides/storage/cdn/smart-cdn) |
+
+For sensitive private files, use short lifetimes and assess whether downloads must pass through a status-checking server. A previously issued signed URL cannot be made safe by the database operation fence. Public bucket objects cannot be protected by an account suspension latch.
+
+## 3. Durable operation model
+
+### 3.1 New table
+
+The proposed `public.platform_user_suspension_operations` table is a **mutable current-state record**. The companion `public.platform_user_suspension_operation_events` table is the append-only transition history. Fields and constraints are in the companion SQL. Its key properties are:
+
+- `operation_id uuid primary key`: idempotency key generated by the trusted API and reused for every retry of that user intent.
+- `target_user_id uuid`, `generation bigint`: monotonically increasing generation per target, unique as a pair.
+- `desired_suspended boolean` preserves the original request; `resolved_suspended boolean` records the verified final latch outcome; `resolution_kind` distinguishes normal completion (`requested`, which must equal the request) from operator override (`operator_override`). The mutable record also stores `state`, `phase`, `actor_id`, `reason`, timestamps, `last_error_code`, `auth_observed_banned`, and a protected `dispatch_token uuid` capability.
+- A partial unique index allows at most one nonterminal operation per target. Terminal history remains for audit/reconciliation.
+- State is one of `pending`, `reconciliation_required`, or `completed`. Phase is one of `claimed`, `dispatch_authorized`, `auth_confirmed`, or `finalized`.
+- A completed row must have a resolved outcome and resolution kind. A normal finalization must satisfy `resolved_suspended = desired_suspended`; only operator reconciliation may complete with a different resolved outcome. The original desired direction is never overwritten.
+- There is no ordinary cancellation RPC. A claimed operation remains the active operation until it is completed or an operator reconciles it. It is never released after an ambiguous network result.
+- A dispatch token is generated and returned only on the one successful authorization transition. Repeated calls return `authorized=false` with no token. The token stays stored while dispatch is unresolved, is never regenerated or expired, and is cleared only when the authorized handler records confirmation or reconciliation-required. It must not be logged or returned to the browser.
+- RLS is enabled with no browser read/write policies; direct table grants are revoked. RPCs are the only app interface. Operators inspect through a reviewed privileged workflow.
+
+`public.platform_user_suspension_operator_principals` stores `database_principal name primary key`, a unique `operator_id uuid references auth.users(id)`, `enabled boolean`, and `created_at`. Reserved shared roles (`authenticator`, `service_role`, `authenticated`, `anon`, `postgres`, and the group role itself) are rejected by constraint. It is owned by the verified database owner, RLS-enabled without application policies, and unreadable/writable by application roles. A separate DBA process provisions one mapping per individually attributable database login after identity/approval verification; this draft intentionally does not provide an application-facing mapping RPC.
+
+The API uses a stable idempotency key for client retries. A request with the same key and same target/direction resumes the same operation. Reuse of an operation ID with different inputs is rejected. A different direction while a nonterminal operation exists returns `409 operation_in_progress`; it cannot supersede an uncertain Auth request.
+
+### 3.2 Serialization and fencing
+
+Each mutation RPC takes the existing global lock `7710064291` first for compatibility with existing role/suspension mutation paths, then a per-target advisory transaction lock derived from the UUID, then ordered Auth row locks, then operation and `platform_user_status` row locks, then audit inserts. Reconciliation takes the global lock, share-locks the verified operator-principal mapping row, then takes the per-target lock, ordered operator/target Auth rows, operation/status rows, and audit inserts. Global lock hold time is only the short database RPC; it does not span network calls. Durable partial-unique-index state serializes the per-user saga across processes; generation and operation ID fence database phase changes and finalizers. Claim replay, dispatch, phase recording and normal finalization also require the verified actor ID to match the operation's original actor, so another active Super Admin cannot take over a normal in-flight operation; such cases require operator reconciliation.
+
+All suspension-related RPCs lock in that same order. No caller may lock `platform_user_status` or an operation row and then acquire either advisory lock. Existing `set_platform_user_suspension` must be replaced/disabled atomically with rollout; it must not remain as an alternate path. Other code that can mutate `platform_user_status` must be inventoried and removed or changed to this protocol.
+
+Database fencing cannot cancel or fence an already-issued Auth Admin request. If Auth accepts a ban/unban but the response is lost, the worker records (or leaves) an ambiguous operation and the row latch stays in place. No opposite operation starts until an operator or reconciliation process establishes the Auth state and determines the prior request is no longer outstanding. If the Auth provider cannot establish that, keep the account blocked and require manual resolution. This can cause prolonged lockout; it is the safe outcome.
+
+## 4. RPC contract and transitions
+
+Claim, phase-recording and finalization functions are `SECURITY DEFINER` with fixed `search_path`, owned by a verified privileged migration owner, and callable by `authenticated`; each derives `auth.uid()` and rechecks active Super Admin authority after locks. **Dispatch authorization is the exception:** it returns a bearer-like one-time token, so it is not granted to `authenticated`; it is service-role-only. The server must verify the bearer with Auth, derive the actor from that verified user, then call the internal RPC with `p_actor_id` from server memory. Never accept that ID from request JSON. The API keeps the token in process memory and never returns or logs it. The recovery scanner is service-role-only and returns bounded metadata. Reconciliation is not executable by app roles or ordinary service-role endpoints; a designated database operator invokes it via the separate login path under out-of-band approval. Direct table writes remain denied. User-facing mutation RPCs also check relevant Auth ban state after acquiring locks.
+
+### Existing API compatibility finding and required integration
+
+Static inspection of `api/admin.js` and `server/teacherApprovalApi.js` found that the current `suspend_student` / `restore_student` handlers still call `coordinateStudentSuspension`, which invokes the legacy `set_platform_user_suspension(uuid, boolean, text)` RPC and performs Auth Admin mutation/read-back without an operation ID, generation, or one-time dispatch token. Its recovery behavior can infer success from `getUserById` after an ambiguous update. The Admin Dashboard currently displays suspension/restore as temporarily disabled, but the `/api/admin` actions remain callable by an active Super Admin making a direct POST; disabled UI controls are not an API shutdown. That helper/path is incompatible with this protocol and must be rejected at the API before the draft is installed. The 20261105 draft revokes the legacy RPC, so leaving the endpoint wired would produce failures or tempt an unsafe fallback. The existing teacher approval endpoints are separate and do not implement suspension recovery. The current `tests/teacherApprovalApi.test.js` suspension tests exercise the old helper and do not validate the proposed operation protocol.
+
+The future endpoint contract is: verify the bearer via `auth.getUser(token)`; derive actor ID only from that verified user; check active Super Admin and status; validate the student target, request UUID, direction and bounded reason; call `claim_platform_user_suspension` with the caller JWT; call the **service-role-only** dispatch RPC with the verified actor ID, operation ID and generation; if and only if it returns `authorized=true`, make exactly one Auth Admin request; never retry that request via SDK, transport, proxy or service mesh unless verified safe; record Auth confirmation/uncertainty with the token using the caller-scoped phase RPC; finalize with the caller-scoped RPC only after authoritative Auth confirmation. API responses expose operation state and both requested/resolved outcomes, never dispatch tokens or secrets. Any exception/timeout after authorization remains blocked and unresolved; do not infer active status from an error, stale read, or process restart. The generic `callAuthenticatedRpc` helper must not be used for dispatch because it would make the token available to the normal user-scoped response path.
+
+### `claim_platform_user_suspension(p_operation_id, p_target_id, p_desired_suspended, p_reason)`
+
+1. Validate UUIDs/direction, authenticated active Super Admin, target exists, target is a student, and idempotency-key consistency.
+2. Take locks in Section 3.2 order. If the same operation exists, return its current state without another audit transition. If another nonterminal target operation exists, return conflict. Allocate `generation = max(generation)+1` under target serialization.
+3. For suspension, insert/retain `platform_user_status` in the same transaction before committing the claim. For restoration, retain the existing latch or arm one if absent. Both choices immediately block database/API access while the operation runs.
+4. Insert operation row at `pending/claimed`. Insert unique operation event `claimed`; for actual latch insertion, insert exactly one `suspend_student` platform audit event with `operation_id` and `generation` metadata. On duplicate already-suspended state, do not emit another state-transition audit.
+
+### `authorize_platform_user_suspension_auth_dispatch(p_actor_id, p_operation_id, p_generation)`
+
+Service-role-only and callable only from the server path after bearer verification. Under the shared/per-target locks and operation-row lock, it rechecks the verified actor ID against active Super Admin, platform status, and Auth ban, changes only `pending/claimed` to `pending/dispatch_authorized`, creates one opaque UUID dispatch token, writes one `auth_dispatch_authorized` event, and returns that token once to the server process. A second instance or retry receives no token and must not call Auth. No lease expires and no recovery worker may reset this phase. The single handler uses the returned token for exactly one Auth Admin request. Do not expose this RPC to `authenticated`; it would let browser PostgREST calls retrieve the token.
+
+### `record_platform_user_suspension_phase(p_operation_id, p_generation, p_phase, p_dispatch_token, p_auth_observed_banned, p_error_code)`
+
+Only accepts `auth_confirmed` or `reconciliation_required` from `pending/dispatch_authorized` when the supplied token matches the stored token. `auth_confirmed` additionally requires `p_auth_observed_banned IS NOT DISTINCT FROM desired_suspended`; otherwise it rejects without changing state. It consumes the dispatch token. If state is already `reconciliation_required`, every normal phase request is rejected, including `auth_confirmed`; only the operator reconciliation function can resolve it. A repeated dispatch-authorization request never returns the consumed or stored token.
+
+Transitions are strict and monotonic: `claimed → dispatch_authorized → auth_confirmed → finalized`, or `dispatch_authorized → reconciliation_required`. The `reconciliation_required` branch has no normal API outgoing transition. A handler crash after receiving the dispatch token leaves the operation pending at `dispatch_authorized`; the scanner identifies it, but ordinary API retries cannot dispatch or confirm it. The operation remains latched until operator reconciliation.
+
+### `finalize_platform_user_suspension(p_operation_id, p_generation, p_auth_banned_confirmed)`
+
+- Requires the current operation, matching generation, state `pending`, phase `auth_confirmed`, and direction-consistent Auth observation. It rejects `reconciliation_required`.
+- For suspension, require Auth banned=true and keep the status row. Mark operation completed/finalized; no second suspend audit.
+- For restoration, require Auth banned=false, check the current Auth ban column only if staging confirms its semantics, then delete `platform_user_status` and mark operation completed in the same transaction. Insert exactly one `restore_student` audit for the actual latch removal, including operation ID/generation.
+- A stale operation cannot change latch state. Missing/terminal operation retries return its stored result without repeating audits.
+
+An authorized handler may mark an ambiguous or failed Auth result `reconciliation_required` only with its token. This does not alter the latch or permit another dispatch. If the handler crashed before recording, the phase remains `dispatch_authorized`; it is still unresolved and operator-only reconciliation is required.
+
+### `list_platform_user_suspension_recovery(p_limit)`
+
+Service-role-only internal recovery scanner returns bounded, non-sensitive operation metadata. The worker uses it to find pending work after restart, but it cannot infer an Auth request failed or blindly replay an ambiguous request. Direct operation-table access stays revoked.
+
+### `reconcile_platform_user_suspension(p_operation_id, p_generation, p_auth_banned_confirmed, p_evidence_reference, p_resolution)`
+
+This function accepts no operator UUID. It is executable only by a separately provisioned `suspension_reconciler` database group role, which is not granted to `authenticated`, `anon`, `service_role`, or PostgREST/API principals. The function reads `session_user`, requires that login to be a member of the dedicated group role, and resolves its human audit identity through the owner-controlled `platform_user_suspension_operator_principals` mapping. A mapped UUID and evidence reference are not self-authenticating: a database administrator must provision each individual login mapping after verifying the person's identity and approval record. Never map a shared application login.
+
+The operator must independently verify the Auth state and establish that no prior Auth request can still apply. `keep_suspended` requires observed Auth banned=true and resolves `resolved_suspended=true`; `restore_active` requires observed Auth banned=false and resolves `resolved_suspended=false`. Either outcome is allowed regardless of original `desired_suspended`, but completion preserves that original request and records `resolution_kind='operator_override'`. It updates the latch to the resolved outcome and audits both requested and resolved values, old/new latch state, mapped operator UUID, database principal, evidence reference, operation ID, and generation. If DB cannot verify human identity (for example, connection pooling hides the individual `session_user`), reconciliation is blocked; the DBA must use an approved individually attributable direct database login or another reviewed authenticated operator channel. An arbitrary UUID or reference string is never proof of identity or approval.
+
+## 5. API state machine
+
+The detailed state diagram and HTTP contract are in the companion [API state-machine specification](TEACHER_SUSPENSION_API_STATE_MACHINE.md). No application implementation is included in this package.
+
+| Desired operation | Database claim | Auth side effect | Database completion |
+|---|---|---|---|
+| Suspend | Claim creates/retains latch; `pending/claimed` | One-time dispatch authorization returns token; one Auth ban request; verify response | Token-authenticated `auth_confirmed`; finalize and retain latch |
+| Restore | Claim retains/arms latch; `pending/claimed` | One-time dispatch authorization returns token; one Auth unban request; verify response | Token-authenticated `auth_confirmed`; finalize and delete latch atomically |
+
+Failure policy:
+
+- Before claim commits: no Auth call is allowed.
+- After claim but before dispatch authorization: the same operation can be claimed/retried; only one call can obtain the token.
+- After dispatch authorization: no normal retry may send another Auth request. Definitive Auth error, timeout, or handler crash leaves the target latched and operation unresolved; only operator reconciliation can release it.
+- Auth confirmation mismatch: reject `auth_confirmed`, retain latch, and leave operation dispatch-authorized or move it to reconciliation-required using the same token.
+- Auth confirmed, phase/finalize response lost: operation state is durable; retry finalize only. Do not repeat Auth or request a new token.
+- Server restart: recovery worker lists nonterminal operations but never resets `dispatch_authorized`, returns its token, or replays Auth. It never expires a dispatch grant.
+- Two API instances: DB claim/index allows only one pending target operation. Competing same operation ID retries join/resume. Opposite operation receives conflict until reconciliation resolves the active operation.
+
+Status responses distinguish `pending`, `reconciliation_required`, `completed`, and `conflict`. Completed API responses include `desired_suspended`, `resolved_suspended`, and `resolution_kind`. The UI remains disabled per request; this design does not authorize UI enablement.
+
+### RPC privilege matrix
+
+| RPC | EXECUTE role | Why |
+|---|---|---|
+| `claim_platform_user_suspension` | `authenticated` | derives actor from `auth.uid()`; returns no secret; rechecks active Super Admin under locks |
+| `authorize_platform_user_suspension_auth_dispatch` | `service_role` only | returns a one-time secret that must stay server-side; API verifies JWT and passes its derived actor ID; never call from browser or return RPC data to browser |
+| `record_platform_user_suspension_phase` | `authenticated` | caller identity from JWT; requires one-time token for server-reported transition; no dispatch authority is returned |
+| `finalize_platform_user_suspension` | `authenticated` | caller identity from JWT; removes latch only after verified Auth observation and operation checks |
+| `list_platform_user_suspension_recovery` | `service_role` | bounded internal scanner metadata; no tokens or reason; callers cannot mutate state through it |
+| `reconcile_platform_user_suspension` | dedicated `suspension_reconciler` DB group only | not granted to app, PostgREST, or service-role API roles; individually attributable direct DB login and owner-managed identity mapping required |
+
+All functions are fixed-search-path SECURITY DEFINER functions owned by the verified privileged owner; default PUBLIC execute is revoked. App roles have no direct operation/event/operator-map table privileges. Service-role permissions and memberships must be checked for inheritance; the service key remains a trusted-server root of authority for the dispatch RPC.
+
+## 6. Audit and idempotency
+
+Transition audit uniqueness is enforced both in operation event history and by a unique index on `platform_audit_logs` metadata `(operation_id, transition)` for suspension events. Dispatch authorization has one unique operation event. Audit inserts occur in the same transaction as the corresponding latch/operation transition. API code never writes duplicate transition audits. Normal retries cannot repeat Auth dispatch; retries of claim/finalize use the same operation ID/generation and return stored state.
+
+Operation phase events are operational evidence in an append-only history through the supported RPC surface; the operation row itself is mutable current state, and a database owner remains privileged to alter either. `suspend_student`/`restore_student` are state-transition audits. A suspend event is emitted whenever claim actually creates a latch, including a protective latch for a restore request; a retry when the latch already exists must not create a duplicate. A restore audit is written only when the latch is actually removed. Reconciliation audits preserve the original requested direction and record the resolved outcome. Audit failures roll back the related database transition; a failed audit must never leave a claimed operation without its required latch.
+
+## 7. Rollback and manual reconciliation
+
+### Rollout order
+
+1. Keep Admin UI actions disabled. Ship an API compatibility shutdown that rejects legacy suspend/restore requests and direct status-table writes; verify every deployed instance has stopped the old path.
+2. Review and apply the operation-journal migration only to disposable staging after all blockers pass. The migration revokes the legacy `set_platform_user_suspension(uuid,boolean,text)` execute grant; confirm no old caller depends on it.
+3. Deploy the new operation-aware API with actions still disabled, then verify authenticated RPC paths, status gates, audits, and the recovery scanner.
+4. Run the full two-instance barrier and fault-injection suite. Failed gates leave actions disabled and the latch protected.
+5. Production requires separate approval and deployment decisions; this design authorizes neither.
+
+### Rollback
+
+- Disable suspend/restore API actions before rolling application versions back.
+- Do not restore the old RPC/API path that can delete the status row without operation fencing.
+- Keep the status latch and operation journal migration in place during an app rollback. Older code must not be allowed to mutate suspension status.
+- Never drop operation history or the audit uniqueness index while nonterminal operations exist.
+- A forward migration may restore compatibility only after proving all pending operations reconciled and preserving fail-closed access checks.
+
+### Manual reconciliation
+
+1. Freeze new operations for the target using the operator-only reconciliation procedure; do not edit rows ad hoc.
+2. Capture operation ID/generation/phase, latch presence, Auth Admin user state, and Auth/DB logs in approved staging or incident records. Do not export tokens.
+3. Determine whether the prior Auth request completed and whether any in-flight request can still apply. If unknown, retain latch and leave `reconciliation_required`.
+4. After authoritative confirmation, invoke the dedicated operator-only reconciliation path with the selected resolved outcome. It records `desired_suspended` unchanged and sets `resolved_suspended` to the verified final outcome. For suspended result, ensure the status row exists and Auth is banned; for active result, prove Auth unban and remove the status row atomically. Verify the human operator identity and approval out of band before mapping their individual database login; the function's evidence-reference parameter is not proof of approval.
+5. Verify API/Postgres/Storage access denial or restoration as appropriate and verify exactly one transition audit. Record evidence and close the incident.
+
+## 8. Concurrent staging test plan
+
+Use the companion [concurrency test plan](TEACHER_SUSPENSION_CONCURRENCY_TEST_PLAN.md): disposable clone only, two independent Postgres sessions, two distinct API instances, disposable users, and explicit barriers. Never use production identities. Capture row snapshots and audit counts before and after every case.
+
+1. **Duplicate dispatch attempts:** two API instances race `authorize_platform_user_suspension_auth_dispatch` for one claimed operation. Exactly one receives a token; the other receives none and cannot call Auth. Repeated authorization never returns a token.
+2. **Different-key duplicate suspend:** A claims and pauses. B submits another operation ID for the same user. Assert `409 operation_in_progress`, no second operation or audit. Resolve A; retry B and confirm a same-state repair/new operation has defined behavior without duplicate latch-transition audit.
+3. **Suspend vs restore:** A claims and obtains dispatch authorization; B's opposite operation conflicts. Repeat barriers after token issuance, Auth response, phase update, and finalization.
+4. **Auth timeout with delayed completion:** fake Auth accepts request but delays response. Terminate the handler; retry on another instance. It receives no token and sends no request. The operation and latch remain unresolved until operator reconciliation.
+5. **Auth error after dispatch:** even a seemingly definitive error consumes the one-time token. No ordinary retry can send Auth again; latch remains and operator reconciliation is required.
+6. **Unban succeeds, finalize fails:** restore Auth state successfully, inject DB finalize/audit failure. Assert latch remains, all access remains denied, operation pending/reconciliation-required. Retry same operation; assert latch deletion + single restore audit.
+7. **Unknown claim commit response:** drop API response after DB claim commits. Retry same operation ID from another instance. Assert existing generation returned and no duplicate claim/latch/audit.
+8. **Stale finalizer:** A has generation N; operation becomes terminal only through reconciliation, then generation N+1 begins. Attempt finalization from stale N. Assert rejected and current latch is unchanged.
+9. **Restart recovery:** terminate after `claimed`, after dispatch token receipt, after Auth response, after `auth_confirmed`, and after finalize commit. A lost token is never reissued; the worker cannot dispatch or resolve reconciliation-required state.
+10. **Actor suspension/role race:** pause claim before/after locks; suspend or demote actor through approved path. Assert RPC rechecks actor authority while locked and denies continuation without writes when actor no longer qualifies.
+11. **Audit failure injection:** fail each operation-event and platform-audit insert in staging. Assert associated DB state change rolls back atomically and latch remains closed where required.
+12. **Access-path matrix:** while latch exists and operation is pending, assert `is_current_user_active()` false; direct PostgREST protected tables denied; `api/ai`, `/api/ask-book`, `/api/index-book`, `/api/admin` target action, and authenticated Storage operations denied; service-role server paths explicitly call active check. Verify public buckets and existing signed URLs separately; do not claim those are revoked by the latch.
+13. **Cross-user concurrency:** run operations for two target IDs in parallel. Assert per-target sequencing is independent; global lock (if retained for compatibility) may briefly serialize DB RPCs but is not held during Auth calls.
+14. **Cross-direction reconciliation:** reconcile an original restore request as `keep_suspended`, then an original suspend request as `restore_active`. Assert completed state, `resolution_kind='operator_override'`, correct `resolved_suspended`, unchanged `desired_suspended`, final latch and Auth state, and audit metadata for each direction.
+15. **Operator identity:** attempt reconciliation through authenticated, student, teacher, and service-role/PostgREST identities; all must lack EXECUTE. Attempt a dedicated-group login without a principal mapping or with a disabled mapping; reject without state/audit changes. Independently compare enabled mappings against the approved identity ledger and block if mismatched. The database cannot detect a false mapping entered by a DBA; verify audit actor derives from the mapped `session_user`, not caller input.
+
+## 9. Supabase Auth guarantees and unresolved assumptions
+
+Supabase documents `auth.admin.updateUserById` as the server-side user update endpoint and shows `{ ban_duration: '876000h' }` for a long ban. It does not document an idempotency key, compare-and-swap generation, or request cancellation/fencing for ban/unban. [updateUserById reference](https://supabase.com/docs/reference/javascript/auth-admin-updateuserbyid)
+
+Supabase states temporary bans block sign-in but do not revoke existing sessions/JWTs. Therefore database/RLS/API checks are mandatory. [User management](https://supabase.com/docs/guides/auth/managing-user-data)
+
+The design does **not** claim Postgres can cancel an Auth request already issued. It assumes only that a successful Auth Admin response is evidence the requested update was accepted; the exact behavior of concurrent updates, timeout ambiguity, read-after-write consistency, `ban_duration: 'none'`, and any provider-side serialization must be tested/confirmed for the target Supabase version. The database ensures only one handler receives the operation's dispatch token; it cannot stop that handler's HTTP client, SDK, proxy, or service mesh from automatically repeating the request. Configure a single attempt and verify that behavior. If there is no way to establish that an ambiguous prior call is no longer outstanding, keep the operation pending and access blocked until manual resolution. Never automatically expire/release dispatch authorization.
+
+### Staging verification blockers
+
+1. Confirm `auth.users.banned_until` exists, its type/meaning, and trusted function-owner read access. Local migrations do not establish this.
+2. Confirm whether the Auth Admin user response reflects the effective ban state immediately, and whether overlapping `updateUserById` calls are serialized/linearizable. Supabase docs do not promise it.
+3. Confirm auth token behavior for still-valid JWTs against Postgres, Storage, and API routes; temporary ban alone is insufficient.
+4. Inventory all deployed API routes, background jobs, Edge Functions, service-role credentials, direct status writers, Storage buckets, public objects, signed-URL lifetimes/CDN behavior, RLS policies, grants, owners, BYPASSRLS/FORCE RLS, and audit insert permissions.
+5. Validate operation table constraints/indexes, function ownership/ACLs, RLS interaction, all RPC failure rollback behavior, and lock ordering on a disposable clone.
+6. Decide incident response and approval rules for operations that remain ambiguous indefinitely. Do not promise automatic recovery when Auth cannot establish request completion.
+7. Confirm `gen_random_uuid()` availability and ensure dispatch tokens are excluded from application logs, traces, PostgREST diagnostics, and API responses to browsers. Verify the deployed HTTP path makes at most one Auth request for a token.
+8. Verify `suspension_reconciler` exists as a dedicated NOLOGIN group, is not inherited by `authenticated`, `anon`, `service_role`, application principals or PostgREST connection roles, and that only individually attributable operator DB login principals are members. Confirm the target Supabase connection path preserves `session_user`; otherwise use a separately reviewed identity mechanism and do not grant reconciliation.
+9. Preflight legacy overloads/dependencies before dropping the old two-argument dispatch function; confirm no caller relies on it. Verify the pre-created reconciliation group exists (the final GRANT intentionally fails closed if it does not).
+10. Check existing `platform_audit_logs` metadata for duplicates that would block the transition unique index. Confirm all status writers, DML grants and `TRUNCATE` privileges match the 20261104 proposal, including service-role memberships.
+11. Verify API implementation has been shut down/replaced: current routes still call `coordinateStudentSuspension` and legacy status RPC; dispatch must use the service-only call with server-derived actor, single Auth request, no automatic retry, and token redaction from all output/logs.
+
+## 10. Review-only status
+
+**Verdict: NOT READY — BLOCKERS REMAIN.** All four artifacts remain REVIEW ONLY and are not approved for execution. The current `/api/admin` suspend/restore actions are still callable directly by an active Super Admin and use the legacy `coordinateStudentSuspension` path; ship/verify the compatibility shutdown and eventual replacement before installing the migration. The migration has not been syntax-checked on the target PostgreSQL version or executed. Verify the dedicated `suspension_reconciler` role, `session_user` preservation, human login mapping, role inheritance, owner/BYPASSRLS/FORCE RLS, grants and audit insert behavior in a disposable staging project. Supabase Auth ordering/idempotency/cancellation/read-after-write guarantees remain undocumented or unverified. Admin UI actions remain disabled. No production-readiness claim is made.

@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { logApiFailure, missingServerEnv, readServerEnv, reportMissingServerEnv } from "../server/apiDiagnostics.js";
+import { callAuthenticatedRpc, coordinateStudentSuspension, validateTeacherBranchInput, verifyActiveSuperAdmin } from "../server/teacherApprovalApi.js";
 
 const url = readServerEnv("SUPABASE_URL", "VITE_SUPABASE_URL");
 const publishableKey = readServerEnv("SUPABASE_PUBLISHABLE_KEY", "SUPABASE_ANON_KEY", "VITE_SUPABASE_PUBLISHABLE_KEY", "VITE_SUPABASE_ANON_KEY");
@@ -155,22 +156,13 @@ export default async function handler(req, res) {
   if (!token) return responseError(res, 401, "Sign in to continue.");
   let user;
   try {
-    const { data, error } = await authClient.auth.getUser(token);
-    if (error || !data.user) return responseError(res, 401, "Your session is invalid or expired.");
-    user = data.user;
+    user = await verifyActiveSuperAdmin({ authClient, adminClient: admin, accessToken: token });
   } catch (error) {
     logApiFailure("admin_auth_verify_failed", error, { route: "/api/admin" });
-    return responseError(res, 503, "Authentication is temporarily unavailable.");
+    return responseError(res, error.status || 503, error.status ? error.message : "Authentication is temporarily unavailable.");
   }
 
   try {
-    const { data: staff, error: staffError } = await admin.from("academic_staff").select("role").eq("user_id", user.id).maybeSingle();
-    if (staffError) throw staffError;
-    if (staff?.role !== "super_admin") return responseError(res, 403, "Super Admin access is required.");
-    const { data: callerStatus, error: callerStatusError } = await admin.from("platform_user_status").select("user_id").eq("user_id", user.id).maybeSingle();
-    if (callerStatusError) throw callerStatusError;
-    if (callerStatus) return responseError(res, 403, "This account is suspended.");
-
     const body = req.body || {};
     switch (body.action) {
       case "overview":
@@ -198,9 +190,13 @@ export default async function handler(req, res) {
         return res.status(200).json({ data: await listEntity(body.entity, Boolean(body.includeArchived)) });
       case "set_role": {
         if (!validUuid(body.userId) || !["student", "teacher", "super_admin"].includes(body.role)) return responseError(res, 400, "Choose a valid user and role.");
+        if (body.role !== "student") return responseError(res, 409, "Teacher and Super Admin promotions are disabled until the secure provisioning workflows are available.");
         if (body.userId === user.id) return responseError(res, 400, "You cannot change your own role.");
         const { data: target, error: authError } = await admin.auth.admin.getUserById(body.userId);
         if (authError || !target?.user) return responseError(res, 404, "User was not found.");
+        const { data: targetStaff, error: targetStaffError } = await admin.from("academic_staff").select("role").eq("user_id", body.userId).maybeSingle();
+        if (targetStaffError) throw targetStaffError;
+        if (targetStaff?.role === "super_admin") return responseError(res, 409, "Super Admin roles cannot be changed through user management.");
         const { data: targetStatus, error: targetStatusError } = await admin.from("platform_user_status").select("user_id").eq("user_id", body.userId).maybeSingle();
         if (targetStatusError) throw targetStatusError;
         if (targetStatus) return responseError(res, 409, "Restore the suspended account before changing its role.");
@@ -212,33 +208,55 @@ export default async function handler(req, res) {
         if (roleChangeError) throw roleChangeError;
         return res.status(200).json({ data: { userId: body.userId, role: body.role } });
       }
+      case "approve_teacher": {
+        const branchIds = validateTeacherBranchInput(body.userId, body.branchIds, user.id);
+        const data = await callAuthenticatedRpc({
+          createClient,
+          url,
+          publishableKey,
+          accessToken: token,
+          functionName: "approve_teacher_with_branches",
+          args: { p_target_id: body.userId, p_branch_ids: branchIds },
+        });
+        return res.status(200).json({ data });
+      }
+      case "set_teacher_branches": {
+        const branchIds = validateTeacherBranchInput(body.userId, body.branchIds, user.id);
+        const data = await callAuthenticatedRpc({
+          createClient,
+          url,
+          publishableKey,
+          accessToken: token,
+          functionName: "set_teacher_branches",
+          args: { p_target_id: body.userId, p_branch_ids: branchIds },
+        });
+        return res.status(200).json({ data });
+      }
       case "suspend_student":
       case "restore_student": {
-        if (!validUuid(body.userId) || body.userId === user.id) return responseError(res, 400, "Choose a valid student account.");
-        const { data: targetRole, error: roleError } = await admin.from("academic_staff").select("role").eq("user_id", body.userId).maybeSingle();
-        if (roleError) throw roleError;
-        if (targetRole) return responseError(res, 403, "Only student accounts can be suspended or restored here.");
-        const { data: authTarget, error: lookupError } = await admin.auth.admin.getUserById(body.userId);
-        if (lookupError || !authTarget?.user) return responseError(res, 404, "User was not found.");
-        let data;
-        if (body.action === "suspend_student") {
-          const { error: statusError } = await admin.from("platform_user_status").upsert({ user_id: body.userId, suspended_by: user.id, reason: typeof body.reason === "string" ? body.reason.slice(0, 500) : "" }, { onConflict: "user_id" });
-          if (statusError) throw statusError;
-          const result = await admin.auth.admin.updateUserById(body.userId, { ban_duration: "876000h" });
-          data = result.data;
-          if (result.error) {
-            await writeAudit(user.id, "suspension_applied_database_guard", "user", body.userId, {});
-            throw result.error;
-          }
-        } else {
-          const result = await admin.auth.admin.updateUserById(body.userId, { ban_duration: "none" });
-          data = result.data;
-          if (result.error) throw result.error;
-          const { error: clearError } = await admin.from("platform_user_status").delete().eq("user_id", body.userId);
-          if (clearError) throw clearError;
-        }
-        await writeAudit(user.id, body.action, "user", body.userId, {});
-        return res.status(200).json({ data: { userId: body.userId, banned_until: data.user?.banned_until || null } });
+        if (!validUuid(body.userId)) return responseError(res, 400, "Choose a valid student account.");
+        if (body.userId === user.id) return responseError(res, 400, "You cannot suspend or restore your own account.");
+        const suspended = body.action === "suspend_student";
+        const data = await coordinateStudentSuspension({
+          userId: body.userId,
+          suspended,
+          reason: body.reason,
+          callRpc: (functionName, args) => callAuthenticatedRpc({
+            createClient,
+            url,
+            publishableKey,
+            accessToken: token,
+            functionName,
+            args,
+          }),
+          authAdmin: admin.auth.admin,
+          readSuspension: async (targetId) => {
+            const { data: status, error } = await admin.from("platform_user_status").select("user_id").eq("user_id", targetId).maybeSingle();
+            if (error) throw error;
+            return Boolean(status);
+          },
+        });
+        return res.status(200).json({ data });
       }
       case "save": {
         const config = allowedTables[body.entity];
@@ -299,26 +317,22 @@ export default async function handler(req, res) {
         await writeAudit(user.id, body.archived ? "archived" : "restored", body.entity, body.id, {});
         return res.status(200).json({ data });
       }
-      case "teacher_branch": {
-        if (!validUuid(body.userId) || !validUuid(body.branchId)) return responseError(res, 400, "Choose a valid teacher and branch.");
-        if (body.assigned) {
-          const { data: teacher, error } = await admin.from("academic_staff").select("role").eq("user_id", body.userId).maybeSingle();
-          if (error) throw error;
-          if (teacher?.role !== "teacher") return responseError(res, 400, "Assign branches only to teacher accounts.");
-          const { error: assignError } = await admin.from("academic_staff_branches").upsert({ user_id: body.userId, branch_id: body.branchId, assigned_by: user.id }, { onConflict: "user_id,branch_id" });
-          if (assignError) throw assignError;
-        } else {
-          const { error: removeError } = await admin.from("academic_staff_branches").delete().eq("user_id", body.userId).eq("branch_id", body.branchId);
-          if (removeError) throw removeError;
-        }
-        await writeAudit(user.id, body.assigned ? "branch_assigned" : "branch_unassigned", "teacher", body.userId, { branch_id: body.branchId });
-        return res.status(200).json({ data: { userId: body.userId, branchId: body.branchId, assigned: Boolean(body.assigned) } });
-      }
+      case "teacher_branch":
+        return responseError(res, 409, "Single-branch assignment changes are disabled until the atomic branch-set workflow is available.");
       default:
         return responseError(res, 400, "Unknown admin action.");
     }
   } catch (error) {
     logApiFailure("admin_operation_failed", error, { route: "/api/admin", action: req.body?.action || "unknown" });
+    if (error.partial) {
+      return res.status(error.status || 502).json({
+        error: error.message,
+        code: error.code,
+        partial: true,
+        state: error.state,
+        retry_action: error.retry_action,
+      });
+    }
     return responseError(res, error.status || 500, error.status ? error.message : "The admin operation could not be completed.");
   }
 }

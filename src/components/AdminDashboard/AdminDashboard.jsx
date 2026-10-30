@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity, Archive, BookOpen, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight,
   ClipboardList, FileText, GraduationCap, Layers3, Megaphone, RefreshCw, Search,
-  Settings2, ShieldCheck, UserCog, Users, X,
+  Settings2, ShieldCheck, UserCog, Users,
 } from "lucide-react";
 import { adminRequest } from "../../lib/adminApi.js";
 import { supabase } from "../../lib/supabase.js";
@@ -83,13 +83,7 @@ export default function AdminDashboard({ notify }) {
         return;
       }
       if (section === "teachers") {
-        const [teachers, branches] = await Promise.all([
-          adminRequest("list", { entity: "teachers" }),
-          supabase.from("academic_branches").select("id, name").order("name"),
-        ]);
-        if (branches.error) throw branches.error;
-        setData(teachers);
-        setAuxiliary((old) => ({ ...old, branches: branches.data || [] }));
+        setData(await adminRequest("list", { entity: "teachers" }));
         return;
       }
       if (section === "assignments") {
@@ -146,12 +140,6 @@ export default function AdminDashboard({ notify }) {
     await run("set_role", { userId: person.id, role }, "User role updated.");
   }
 
-  async function setSuspension(person, suspend) {
-    const action = suspend ? "suspend_student" : "restore_student";
-    if (!window.confirm(`${suspend ? "Suspend" : "Restore access for"} ${person.email}?`)) return;
-    await run(action, { userId: person.id }, suspend ? "Student account suspended." : "Student account restored.");
-  }
-
   async function archive(entity, row, archived = true) {
     const label = row.name || row.title || row.label || row.subject || row.id;
     if (!window.confirm(`${archived ? "Archive" : "Restore"} “${label}”? Archived records are retained.`)) return;
@@ -179,13 +167,13 @@ export default function AdminDashboard({ notify }) {
         {error && <div className={styles.error} role="alert"><span>{error}</span><button type="button" onClick={refresh}>Retry</button></div>}
         {loading ? <div className={styles.loading} role="status">Loading verified platform data…</div> : <>
           {section === "overview" && <Overview data={overview} onGo={setSection}/>}
-          {section === "users" && <UserManagement rows={visibleRows} page={page} search={search} setSearch={setSearch} setPage={setPage} onRole={changeRole} onSuspend={setSuspension} />}
+          {section === "users" && <UserManagement rows={visibleRows} page={page} search={search} setSearch={setSearch} setPage={setPage} onRole={changeRole} />}
           {section === "catalog" && data && <CatalogManagement data={data} onRefresh={refresh} notify={notify}/>}
           {section === "courses" && <CourseManagement rows={visibleRows} search={search} setSearch={setSearch} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity} onArchive={archive}/>}
           {section === "curriculum" && <CurriculumManagement data={auxiliary} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity} onArchive={archive}/>}
           {section === "assignments" && <AssignmentManagement rows={visibleRows} courses={auxiliary.courses} search={search} setSearch={setSearch} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity} onArchive={archive}/>}
           {section === "resources" && <ResourceManagement rows={visibleRows} search={search} setSearch={setSearch} saving={saving} onSave={run} onArchive={archive}/>}
-          {section === "teachers" && <TeacherManagement rows={visibleRows} branches={auxiliary.branches} search={search} setSearch={setSearch} saving={saving} onAssign={run} onRefresh={refresh}/>}
+          {section === "teachers" && <TeacherManagement rows={visibleRows} search={search} setSearch={setSearch} />}
           {section === "announcements" && <AnnouncementManagement rows={visibleRows} search={search} setSearch={setSearch} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity} onArchive={archive}/>}
           {section === "audit" && <AuditLogs rows={visibleRows} search={search} setSearch={setSearch}/>}
           {section === "settings" && <SettingsManagement rows={visibleRows} search={search} setSearch={setSearch} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity}/>}
@@ -213,10 +201,11 @@ function Overview({ data, onGo }) {
   </>;
 }
 
-function UserManagement({ rows, page, search, setSearch, setPage, onRole, onSuspend }) {
+function UserManagement({ rows, page, search, setSearch, setPage, onRole }) {
   return <>
+    <p className={styles.help}>Teacher and Super Admin promotions, and suspension or restore actions, are temporarily disabled pending the secure provisioning and coordinated suspension workflows.</p>
     <SearchBox search={search} setSearch={setSearch} placeholder="Search account email or name"/>
-    <div className={styles.tableWrap}><table><thead><tr><th>Account</th><th>Role</th><th>Joined</th><th>Last sign in</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows.map((person)=><tr key={person.id}><td><strong>{person.name || "Unnamed account"}</strong><small>{person.email}</small></td><td><select value={person.role} onChange={(event)=>onRole(person,event.target.value)} aria-label={`Role for ${person.email}`}><option value="student">Student</option><option value="teacher">Teacher</option><option value="super_admin">Super Admin</option></select></td><td>{displayDate(person.created_at)}</td><td>{displayDate(person.last_sign_in_at)}</td><td><span className={person.is_suspended ? styles.badgeWarn : styles.badge}>{person.is_suspended ? `Suspended${person.banned_until ? ` until ${displayDate(person.banned_until)}` : " (database access blocked)"}` : "Active"}</span></td><td>{person.role === "student" ? <button type="button" className={styles.smallAction} onClick={()=>onSuspend(person,!person.is_suspended)}>{person.is_suspended?"Restore":"Suspend"}</button> : <span className={styles.muted}>Staff accounts protected</span>}</td></tr>)}</tbody></table>{!rows.length && <Empty text="No user accounts on this page match the search."/>}</div>
+    <div className={styles.tableWrap}><table><thead><tr><th>Account</th><th>Role</th><th>Joined</th><th>Last sign in</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows.map((person)=><tr key={person.id}><td><strong>{person.name || "Unnamed account"}</strong><small>{person.email}</small></td><td><span className={person.role === "super_admin" ? styles.badgeWarn : styles.badge}>{person.role.replace("_", " ")}</span></td><td>{displayDate(person.created_at)}</td><td>{displayDate(person.last_sign_in_at)}</td><td><span className={person.is_suspended ? styles.badgeWarn : styles.badge}>{person.is_suspended ? `Suspended${person.banned_until ? ` until ${displayDate(person.banned_until)}` : " (database access blocked)"}` : "Active"}</span></td><td>{person.role === "teacher" ? <button type="button" className={styles.smallAction} onClick={() => onRole(person, "student")}>Demote to student</button> : <span className={styles.muted}>{person.role === "super_admin" ? "Super Admin protected" : "No role change"}</span>}</td></tr>)}</tbody></table>{!rows.length && <Empty text="No user accounts on this page match the search."/>}</div>
     <div className={styles.pager}><button type="button" onClick={()=>setPage((value)=>Math.max(1,value-1))} disabled={page===1}><ChevronLeft size={15}/> Previous</button><span>Page {page}</span><button type="button" onClick={()=>setPage((value)=>value+1)} disabled={rows.length<100}>Next <ChevronRight size={15}/></button></div>
   </>;
 }
@@ -251,9 +240,8 @@ function ResourceManagement({ rows, search, setSearch, saving, onSave, onArchive
   return <><SearchBox search={search} setSearch={setSearch} placeholder="Search material name or subject"/><div className={styles.tableWrap}><table><thead><tr><th>Resource</th><th>Uploader</th><th>Subject</th><th>Sharing</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows.map((row)=><tr key={row.id}><td><strong>{row.name}</strong><small>{row.type} · {Number(row.size||0).toLocaleString()} bytes</small></td><td>{row.user_id}</td><td>{row.subject||"—"}</td><td><button type="button" className={styles.smallAction} disabled={saving} onClick={()=>onSave("save",{entity:"materials",id:row.id,values:{is_shared:!row.is_shared}},"Resource sharing updated.")}>{row.is_shared?"Shared":"Private"}</button></td><td>{row.archived_at?"Archived":"Active"}</td><td><button type="button" className={styles.smallAction} onClick={()=>onArchive("materials",row,!row.archived_at)}>{row.archived_at?"Restore":"Archive"}</button></td></tr>)}</tbody></table>{!rows.length&&<Empty text="No uploaded resources were found."/>}</div></>;
 }
 
-function TeacherManagement({ rows, branches, search, setSearch, onAssign, onRefresh }) {
-  const [selectedBranch,setSelectedBranch]=useState({});
-  return <><SearchBox search={search} setSearch={setSearch} placeholder="Search teachers"/><div className={styles.tableWrap}><table><thead><tr><th>Staff member</th><th>Role</th><th>Assigned branches</th><th>Assign branch</th></tr></thead><tbody>{rows.map((row)=><tr key={row.user_id}><td><strong>{row.user?.user_metadata?.full_name||row.user?.email||row.user_id}</strong><small>{row.user?.email||row.user_id}</small></td><td><span className={row.role==="super_admin"?styles.badgeWarn:styles.badge}>{row.role.replace("_"," ")}</span></td><td>{row.branches.map((branch)=><button type="button" key={branch.id} className={styles.assignmentTag} onClick={()=>onAssign("teacher_branch",{userId:row.user_id,branchId:branch.id,assigned:false}).then(onRefresh)}>{branch.name} <X size={12}/></button>)}{row.role==="super_admin"&&<span className={styles.muted}>Global access</span>}</td><td>{row.role==="teacher"&&<div className={styles.assignControl}><select value={selectedBranch[row.user_id]||""} onChange={(event)=>setSelectedBranch((old)=>({...old,[row.user_id]:event.target.value}))}><option value="">Choose branch</option>{branches.filter((branch)=>!row.branches.some((assigned)=>assigned.id===branch.id)).map((branch)=><option key={branch.id} value={branch.id}>{branch.name}</option>)}</select><button type="button" disabled={!selectedBranch[row.user_id]} onClick={()=>onAssign("teacher_branch",{userId:row.user_id,branchId:selectedBranch[row.user_id],assigned:true}).then(onRefresh)}>Assign</button></div>}</td></tr>)}</tbody></table>{!rows.length&&<Empty text="No teachers or Super Admins have been provisioned."/>}</div></>;
+function TeacherManagement({ rows, search, setSearch }) {
+  return <><p className={styles.help}>Branch assignment changes are temporarily disabled pending the atomic branch-set workflow. Current assignments remain viewable.</p><SearchBox search={search} setSearch={setSearch} placeholder="Search teachers"/><div className={styles.tableWrap}><table><thead><tr><th>Staff member</th><th>Role</th><th>Assigned branches</th></tr></thead><tbody>{rows.map((row)=><tr key={row.user_id}><td><strong>{row.user?.user_metadata?.full_name||row.user?.email||row.user_id}</strong><small>{row.user?.email||row.user_id}</small></td><td><span className={row.role==="super_admin"?styles.badgeWarn:styles.badge}>{row.role.replace("_"," ")}</span></td><td>{row.branches.map((branch)=><span key={branch.id} className={styles.assignmentTag}>{branch.name}</span>)}{row.role==="super_admin"&&<span className={styles.muted}>Global access</span>}</td></tr>)}</tbody></table>{!rows.length&&<Empty text="No teachers or Super Admins have been provisioned."/>}</div></>;
 }
 
 function AnnouncementManagement({ rows, search, setSearch, draft, setDraft, saving, onSave, onArchive }) {
