@@ -33,6 +33,7 @@ import { LegalPage, PublicLanding } from "./components/PublicSite.jsx";
 
 import { usePersistentState } from "./hooks/usePersistentState.js";
 import { supabase, STORAGE_BUCKETS } from "./lib/supabase.js";
+import { fetchPlatformRole, getWorkspaceAccess } from "./lib/workspaceAccess.js";
 import {
   initialCourses,
   initialMaterials,
@@ -79,7 +80,10 @@ export default function App() {
   const [courseLoadStatus, setCourseLoadStatus] = useState("loading");
   const [materialLoadStatus, setMaterialLoadStatus] = useState("loading");
   const [chapterProgressByCourse, setChapterProgressByCourse] = useState({});
-  const [platformRole, setPlatformRole] = useState("student");
+  const [platformRole, setPlatformRole] = useState(null);
+  const [roleLoading, setRoleLoading] = useState(true);
+  const [roleError, setRoleError] = useState("");
+  const [roleRetry, setRoleRetry] = useState(0);
   const [academicProfile, setAcademicProfile] = useState(null);
   const [academicProfileLoading, setAcademicProfileLoading] = useState(true);
   const [academicProfileError, setAcademicProfileError] = useState("");
@@ -140,16 +144,33 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    setPlatformRole("student");
-    if (!supabase || !session?.userId) return () => { active = false; };
-    supabase.from("academic_staff").select("role").eq("user_id", session.userId).maybeSingle()
-      .then(({ data, error }) => {
-        if (error) throw error;
-        if (active) setPlatformRole(data?.role || "student");
+    setPlatformRole(null);
+    setRoleError("");
+    if (!session?.userId) {
+      setPlatformRole("student");
+      setRoleLoading(false);
+      return () => { active = false; };
+    }
+    setRoleLoading(true);
+    if (!supabase) {
+      setRoleError("Supabase is not configured. Your account role could not be verified.");
+      setRoleLoading(false);
+      return () => { active = false; };
+    }
+    fetchPlatformRole(supabase, session.userId)
+      .then((role) => {
+        if (!active) return;
+        setPlatformRole(role);
+        setActive(role === "super_admin" ? "Courses" : "Dashboard");
       })
-      .catch((error) => console.error("Could not load the signed-in role:", error));
+      .catch((error) => {
+        if (!active) return;
+        console.error("Could not load the signed-in role:", error);
+        setRoleError(error.message || "Could not verify your account role. Please try again.");
+      })
+      .finally(() => { if (active) setRoleLoading(false); });
     return () => { active = false; };
-  }, [session?.userId]);
+  }, [session?.userId, roleRetry]);
 
   useEffect(() => {
     let current = true;
@@ -157,7 +178,11 @@ export default function App() {
       setAcademicProfile(null);
       setAcademicProfileError("");
       setAcademicProfileLoading(true);
-      if (!session?.userId || !supabase) { setAcademicProfileLoading(false); return; }
+      if (roleLoading || roleError) return;
+      if (platformRole === "super_admin" || !session?.userId || !supabase) {
+        setAcademicProfileLoading(false);
+        return;
+      }
       const { data, error } = await supabase.from("academic_profiles")
         .select("degree_id, branch_id, academic_cycle_id, year_level, semester")
         .eq("user_id", session.userId).maybeSingle();
@@ -168,7 +193,7 @@ export default function App() {
     }
     loadAcademicProfile();
     return () => { current = false; };
-  }, [session?.userId]);
+  }, [session?.userId, platformRole, roleLoading, roleError]);
 
   useEffect(() => {
     if (active === "Admin" && platformRole !== "super_admin") setActive("Dashboard");
@@ -508,9 +533,22 @@ async function handleLogout() {
     return <Login onLogin={handleLogin} initialMode={isPasswordRecoveryFlow || passwordRecovery ? "reset" : currentPath === "/signup" ? "signup" : undefined} onExitRecovery={() => setPasswordRecovery(false)} />;
   }
 
-  if (academicProfileLoading) return <main className={styles.loading} aria-live="polite">Preparing your academic workspace…</main>;
-  if (academicProfileError) return <main className={styles.loading} role="alert">Could not verify your academic profile: {academicProfileError}</main>;
-  if (!academicProfile || !academicProfile.degree_id || !academicProfile.branch_id) {
+  const workspaceAccess = getWorkspaceAccess({
+    authenticated: Boolean(session?.authenticated),
+    authLoading,
+    roleLoading,
+    roleError,
+    role: platformRole,
+    profileLoading: academicProfileLoading,
+    profileError: academicProfileError,
+    profile: academicProfile,
+  });
+
+  if (workspaceAccess === "role-loading") return <main className={styles.loading} aria-live="polite">Verifying your account access…</main>;
+  if (workspaceAccess === "role-error") return <main className={styles.loading} role="alert">Could not verify your account role: {roleError} <button type="button" onClick={() => setRoleRetry((value) => value + 1)}>Retry</button></main>;
+  if (workspaceAccess === "profile-loading") return <main className={styles.loading} aria-live="polite">Preparing your academic workspace…</main>;
+  if (workspaceAccess === "profile-error") return <main className={styles.loading} role="alert">Could not verify your academic profile: {academicProfileError}</main>;
+  if (workspaceAccess === "onboarding") {
     return <AcademicProfile onboarding onSaved={(profile) => { setAcademicProfile(profile); setActive("Dashboard"); }} />;
   }
 

@@ -231,15 +231,19 @@ begin
 
   if not exists (select 1 from pg_policies where schemaname='public' and tablename='study_materials' and policyname='study-sync-material-insert') then
     create policy "study-sync-material-insert" on public.study_materials as permissive for insert to authenticated
-      with check (user_id = auth.uid() and course_id is not null and exists (
+      with check (user_id = auth.uid() and (
+  course_id is null
+  OR EXISTS (
         select 1 from public.courses c where c.id = course_id and c.owner_id = auth.uid()
-      ));
+      )));
   end if;
   if not exists (select 1 from pg_policies where schemaname='public' and tablename='study_materials' and policyname='study-sync-material-insert-guard') then
     create policy "study-sync-material-insert-guard" on public.study_materials as restrictive for insert to public
-      with check (auth.uid() is not null and user_id = auth.uid() and course_id is not null and exists (
+      with check (auth.uid() is not null and user_id = auth.uid() and (
+  course_id is null
+  OR EXISTS (
         select 1 from public.courses c where c.id = course_id and c.owner_id = auth.uid()
-      ));
+      )));
   end if;
 
   if not exists (select 1 from pg_policies where schemaname='public' and tablename='study_materials' and policyname='study-sync-material-update') then
