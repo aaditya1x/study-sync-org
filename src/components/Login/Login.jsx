@@ -114,8 +114,6 @@ export default function Login({ onLogin, initialMode, onExitRecovery }) {
       setLoading(false);
     }
   }
-  async function handleGoogle() { if (!supabase) return setError("Supabase is not configured. Check your .env file."); setLoading(true); setError(""); const { error: oauthError } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: getAuthRedirectUrl() } }); if (oauthError) { setLoading(false); setError(authErrorMessage(oauthError)); } }
-
   const passwordPage = mode === "signup" || mode === "reset";
   const title = mode === "signup" ? "Create your account" : mode === "forgot" ? "Reset your password" : mode === "reset" ? "Choose a new password" : "Welcome back";
   const isStatus = ["verify", "existing", "callback", "callback-error"].includes(mode);
@@ -124,7 +122,6 @@ export default function Login({ onLogin, initialMode, onExitRecovery }) {
     <div className={styles.formPanel}><a className={styles.backLink} href="/">← Study Sync home</a><div className={styles.mobileBrand}><GraduationCap size={25}/><strong>Study Sync</strong></div>
       {isStatus ? <StatusScreen mode={mode} email={registeredEmail} error={error} message={message} loading={loading} onResend={handleResend} onLogin={() => changeMode("login")} onForgot={() => changeMode("forgot")}/> : <>
         <div className={styles.formHeading}><span className={styles.welcome}>{mode === "login" ? "WELCOME BACK" : mode === "signup" ? "GET STARTED" : "ACCOUNT RECOVERY"}</span><h2>{title}</h2><p>{mode === "forgot" ? "Enter your email and we’ll send a secure reset link." : mode === "reset" ? "Set a strong password for your Study Sync account." : mode === "login" ? "Sign in to access your learning space." : "Join Study Sync and organize your learning."}</p></div>
-        {(mode === "login" || mode === "signup") && <><button type="button" className={styles.googleButton} onClick={handleGoogle} disabled={loading}><span className={styles.googleMark}>G</span>Continue with Google</button><div className={styles.divider}><span>OR CONTINUE WITH</span></div></>}
         <form className={styles.form} onSubmit={mode === "forgot" ? handleForgotPassword : mode === "reset" ? handleResetPassword : handleSubmit}>
           {mode === "signup" && <Field icon={<UserRound size={18}/>} label="Full name" type="text" value={name} onChange={setName} autoComplete="name" placeholder="Enter your full name"/>}
           {mode !== "reset" && <Field icon={<Mail size={18}/>} label="Email address" type="email" value={email} onChange={setEmail} autoComplete="email" placeholder="you@example.com"/>}

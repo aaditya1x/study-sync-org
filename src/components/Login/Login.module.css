@@ -256,16 +256,6 @@
   cursor: pointer;
 }
 
-.googleButton {
-  width: 100%; min-height: 50px; display: flex; align-items: center; justify-content: center; gap: 10px;
-  border: 1px solid #33425f; border-radius: 11px; background: #111c31; color: #edf2ff;
-  font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
-}
-.googleButton:hover:not(:disabled) { border-color: #8099ff; background: #14203a; }
-.googleButton:disabled { opacity: .6; cursor: wait; }
-.googleMark { display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%; background: #fff; color: #4285f4; font-size: 13px; font-weight: 900; }
-.divider { display: flex; align-items: center; gap: 12px; margin: 20px 0; color: #71819d; font-size: 9px; font-weight: 800; letter-spacing: 1.2px; }
-.divider::before, .divider::after { content: ""; height: 1px; flex: 1; background: #2c3953; }
 .forgotPassword { align-self: flex-end; padding: 0; border: 0; background: transparent; color: #aebfff; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
 .terms { display: flex; align-items: center; gap: 7px; }
 .terms input { accent-color: #91a8ff; }
