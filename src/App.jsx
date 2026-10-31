@@ -29,6 +29,7 @@ import { Toast } from "./components/Toast/index.js";
 import { Login } from "./components/Login/index.js";
 import AcademicProfile from "./components/AcademicProfile/AcademicProfile.jsx";
 import AcademicAssignments from "./components/AcademicAssignments/AcademicAssignments.jsx";
+import { LegalPage, PublicLanding } from "./components/PublicSite.jsx";
 
 import { usePersistentState } from "./hooks/usePersistentState.js";
 import { supabase, STORAGE_BUCKETS } from "./lib/supabase.js";
@@ -66,6 +67,7 @@ function makeSession(user) {
 }
 
 export default function App() {
+  const currentPath = typeof window === "undefined" ? "/" : window.location.pathname;
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [active, setActive] = useState("Dashboard");
@@ -494,12 +496,16 @@ async function handleLogout() {
     : navItems;
   const title = visibleNavItems.find((item) => item.id === active)?.label || active;
 
+  if (currentPath === "/terms") return <LegalPage type="terms" />;
+  if (currentPath === "/privacy") return <LegalPage type="privacy" />;
+
   if (authLoading) {
     return <main className={styles.loading} aria-live="polite">Loading your workspace…</main>;
   }
 
   if (!session?.authenticated || isPasswordRecoveryFlow || passwordRecovery) {
-    return <Login onLogin={handleLogin} initialMode={isPasswordRecoveryFlow || passwordRecovery ? "reset" : undefined} onExitRecovery={() => setPasswordRecovery(false)} />;
+    if (!isPasswordRecoveryFlow && !passwordRecovery && currentPath === "/") return <PublicLanding />;
+    return <Login onLogin={handleLogin} initialMode={isPasswordRecoveryFlow || passwordRecovery ? "reset" : currentPath === "/signup" ? "signup" : undefined} onExitRecovery={() => setPasswordRecovery(false)} />;
   }
 
   if (academicProfileLoading) return <main className={styles.loading} aria-live="polite">Preparing your academic workspace…</main>;

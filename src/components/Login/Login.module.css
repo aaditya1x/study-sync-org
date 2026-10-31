@@ -170,6 +170,9 @@
   background: rgba(12, 20, 37, 0.58);
 }
 
+.backLink { align-self:flex-start; margin:-12px 0 25px; color:#aebfff; font-size:11px; font-weight:700; text-decoration:none; }
+.backLink:hover { text-decoration:underline; }
+
 .mobileBrand {
   display: none;
 }
@@ -266,6 +269,8 @@
 .forgotPassword { align-self: flex-end; padding: 0; border: 0; background: transparent; color: #aebfff; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
 .terms { display: flex; align-items: center; gap: 7px; }
 .terms input { accent-color: #91a8ff; }
+.terms a { color:#c0cbff; font-weight:700; text-underline-offset:2px; }
+.terms a:hover { color:#fff; }
 .textButton { padding: 0; border: 0; background: transparent; color: #aebfff; font: inherit; font-weight: 700; cursor: pointer; }
 .terms { color: #aebbd3; font-size: 11px; line-height: 1.5; }
 .strength { display: flex; align-items: center; justify-content: space-between; margin-top: -10px; color: #8fa1c1; font-size: 10px; }
@@ -387,6 +392,8 @@
     color: #f2f5ff;
     font-size: 17px;
   }
+
+  .backLink { margin:-5px 0 20px; }
 
   .mobileBrand svg {
     color: #a9baff;
