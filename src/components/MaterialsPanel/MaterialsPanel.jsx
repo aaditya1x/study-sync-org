@@ -6,6 +6,7 @@ import {
 import { EmptyState } from "../EmptyState/index.js";
 import styles from "./MaterialsPanel.module.css";
 import { supabase, isSupabaseConfigured, STORAGE_BUCKETS } from "../../lib/supabase.js";
+import { createMaterialMetadata, createPreviewLifecycle, mapMaterialRecord, nextMaterialSharingValue, resolveMaterialLinkRequests, validateMaterialFile } from "./fileValidation.js";
 
 const BUCKET = STORAGE_BUCKETS.materials;
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -42,23 +43,15 @@ function materialType(item) {
   return (item.type || fileExtension(item.name) || "file").toUpperCase();
 }
 
-function mapMaterial(item, signedUrl = "", storageError = "") {
-  return {
-    id: item.storage_path,
-    name: item.name,
-    subject: item.subject || "",
-    size: Number(item.size) || 0,
-    type: item.type || fileExtension(item.name).toUpperCase(),
-    addedAt: item.created_at,
-    isIndexed: Boolean(item.is_indexed),
-    isShared: item.is_shared === true,
-    userId: item.user_id,
-    indexError: "",
-    url: signedUrl,
-    path: item.storage_path,
-    courseId: item.course_id || null,
-    storageError,
-  };
+function mapMaterial(item, signedUrl = "", storageError = "", downloadUrl = "", downloadError = "") {
+  return mapMaterialRecord(item, signedUrl, storageError, downloadUrl, downloadError);
+}
+
+async function createMaterialSignedLinks(storagePath) {
+  return resolveMaterialLinkRequests(
+    Promise.resolve().then(() => supabase.storage.from(BUCKET).createSignedUrl(storagePath, 3600)),
+    Promise.resolve().then(() => supabase.storage.from(BUCKET).createSignedUrl(storagePath, 3600, { download: true })),
+  );
 }
 
 function selectedCourseId(item) {
@@ -92,6 +85,7 @@ export default function MaterialsPanel({
 }) {
   const inputRef = useRef(null);
   const dialogRef = useRef(null);
+  const previewLifecycleRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [file, setFile] = useState(null);
@@ -111,6 +105,8 @@ export default function MaterialsPanel({
   const [sortOrder, setSortOrder] = useState("newest");
   const [groupByCourse, setGroupByCourse] = useState(false);
   const [selectedMaterial, setSelectedMaterial] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -119,13 +115,35 @@ export default function MaterialsPanel({
   const [indexingPaths, setIndexingPaths] = useState(() => new Set());
   const [sharingPaths, setSharingPaths] = useState(() => new Set());
 
+  const closePreview = useCallback(() => {
+    previewLifecycleRef.current?.close();
+    setSelectedMaterial(null);
+    setPreviewError("");
+    setPreviewLoading(false);
+  }, []);
+
+  useEffect(() => {
+    const lifecycle = createPreviewLifecycle({
+      onChange(result) {
+        setPreviewLoading(result.status === "loading");
+        setPreviewError(result.status === "error" ? result.error?.message || "The file could not be safely verified for preview. Download it instead." : "");
+        setSelectedMaterial(result.material);
+      },
+    });
+    previewLifecycleRef.current = lifecycle;
+    return () => {
+      lifecycle.dispose();
+      if (previewLifecycleRef.current === lifecycle) previewLifecycleRef.current = null;
+    };
+  }, []);
+
   useEffect(() => {
     if (!selectedMaterial && !deleteTarget) return undefined;
     const previousFocus = document.activeElement;
     dialogRef.current?.querySelector("button, a[href]")?.focus();
     function handleDialogKeys(event) {
       if (event.key === "Escape") {
-        setSelectedMaterial(null);
+        closePreview();
         setDeleteTarget(null);
       }
       if (event.key === "Tab" && dialogRef.current) {
@@ -142,7 +160,7 @@ export default function MaterialsPanel({
       window.removeEventListener("keydown", handleDialogKeys);
       previousFocus?.focus?.();
     };
-  }, [selectedMaterial, deleteTarget]);
+  }, [selectedMaterial, deleteTarget, closePreview]);
 
   useEffect(() => {
     if (initialCourseId) {
@@ -188,13 +206,16 @@ export default function MaterialsPanel({
 
       const loaded = await Promise.all((data || []).map(async (item) => {
         try {
-          const { data: signed, error: signedError } = await supabase.storage
-            .from(BUCKET)
-            .createSignedUrl(item.storage_path, 3600);
-          if (signedError) return mapMaterial(item, "", storageErrorMessage(signedError));
-          return mapMaterial(item, signed.signedUrl);
+          const links = await createMaterialSignedLinks(item.storage_path);
+          return mapMaterial(
+            item,
+            links.previewUrl,
+            links.previewError ? storageErrorMessage(links.previewError) : "",
+            links.downloadUrl,
+            links.downloadError ? "attachment-signing-failed" : "",
+          );
         } catch (error) {
-          return mapMaterial(item, "", storageErrorMessage(error));
+          return mapMaterial(item, "", storageErrorMessage(error), "", "attachment-signing-failed");
         }
       }));
       if (!isActive()) return;
@@ -250,8 +271,9 @@ export default function MaterialsPanel({
     });
   }, [filteredMaterials, groupByCourse, courseNames]);
 
-  function chooseFile(nextFile) {
+  async function chooseFile(nextFile) {
     if (!nextFile) return;
+    setFile(null);
     const extension = fileExtension(nextFile);
     if (!ACCEPTED_EXTENSIONS.has(extension)) {
       setUploadError("This file type is not supported. Choose a PDF, Office document, text file, image, spreadsheet, or CSV.");
@@ -261,9 +283,15 @@ export default function MaterialsPanel({
       setUploadError("Files must be 50 MB or smaller.");
       return;
     }
-    setFile(nextFile);
-    setUploadAttempt(0);
-    setUploadError("");
+    try {
+      await validateMaterialFile(nextFile);
+      setFile(nextFile);
+      setUploadAttempt(0);
+      setUploadError("");
+    } catch (error) {
+      setFile(null);
+      setUploadError(error.message || "The file could not be verified.");
+    }
   }
 
   function resetUpload() {
@@ -331,6 +359,13 @@ export default function MaterialsPanel({
       setUploadError("Choose a file first.");
       return;
     }
+    let verifiedFile;
+    try {
+      verifiedFile = await validateMaterialFile(file);
+    } catch (error) {
+      setUploadError(error.message || "The file could not be verified.");
+      return;
+    }
     if (courseId && !courses.some((course) => String(course.id) === String(courseId))) {
       setUploadError("Choose a course you can access, or select no course.");
       return;
@@ -367,7 +402,7 @@ export default function MaterialsPanel({
 
       if (existing) {
         const { error: associationError } = await supabase.from("study_materials")
-          .update({ course_id: courseId || null, is_shared: true })
+          .update({ course_id: courseId || null })
           .eq("user_id", authData.user.id)
           .eq("storage_path", path);
         if (associationError) throw associationError;
@@ -375,35 +410,30 @@ export default function MaterialsPanel({
         setUploadStage("Uploading file to the shared study library…");
         const { data: uploaded, error: storageError } = await supabase.storage
           .from(BUCKET)
-          .upload(path, file, { contentType: file.type || "application/octet-stream", upsert: false });
+          .upload(path, file, { contentType: verifiedFile.mime, upsert: false });
         if (storageError) throw new Error(storageErrorMessage(storageError));
         uploadedPath = uploaded.path;
         uploadedByThisAttempt = true;
 
         setUploadStage("Saving course and file details…");
-        const { error: insertError } = await supabase.from("study_materials").insert({
-          user_id: authData.user.id,
+        const { error: insertError } = await supabase.from("study_materials").insert(createMaterialMetadata({
+          userId: authData.user.id,
           name: file.name,
           subject: courseNames.get(String(courseId)) || "",
           size: file.size,
-          type: fileExtension(file).toUpperCase(),
-          storage_path: uploaded.path,
-          course_id: courseId || null,
-          is_shared: true,
-        });
+          storagePath: uploaded.path,
+          courseId,
+        }));
         if (insertError) throw insertError;
         metadataSaved = true;
       }
 
       setUploadStage("Creating a download link…");
-      const { data: signed, error: signedError } = await supabase.storage
-        .from(BUCKET)
-        .createSignedUrl(uploadedPath, 3600);
-      if (signedError) throw new Error(storageErrorMessage(signedError));
+      const links = await createMaterialSignedLinks(uploadedPath);
 
       const now = new Date().toISOString();
       const mapped = existing
-        ? mapMaterial({ ...existing, course_id: courseId || null, is_shared: true }, signed.signedUrl)
+        ? mapMaterial({ ...existing, course_id: courseId || null }, links.previewUrl, links.previewError ? storageErrorMessage(links.previewError) : "", links.downloadUrl, links.downloadError ? "attachment-signing-failed" : "")
         : mapMaterial({
           user_id: authData.user.id,
           storage_path: uploadedPath,
@@ -413,15 +443,14 @@ export default function MaterialsPanel({
           type: fileExtension(file).toUpperCase(),
           created_at: now,
           is_indexed: false,
-          is_shared: true,
+          is_shared: false,
           course_id: courseId || null,
-        }, signed.signedUrl);
+        }, links.previewUrl, links.previewError ? storageErrorMessage(links.previewError) : "", links.downloadUrl, links.downloadError ? "attachment-signing-failed" : "");
 
       setMaterials((current) => [mapped, ...current.filter((item) => item.path !== mapped.path)]);
       setUploadError("");
-      notify(courseId
-        ? `${file.name} uploaded to ${courseNames.get(String(courseId)) || "your course"}.`
-        : `${file.name} uploaded to shared study materials.`);
+      const downloadNotice = links.downloadError ? " A safe download link could not be created; download is currently unavailable." : "";
+      notify(`${courseId ? `${file.name} uploaded to ${courseNames.get(String(courseId)) || "your course"}.` : `${file.name} uploaded as a private material. You can share it with students when ready.`}${downloadNotice}`);
       setUploadOpen(false);
       setFile(null);
 
@@ -475,6 +504,14 @@ export default function MaterialsPanel({
     }
   }
 
+  function openMaterialPreview(material) {
+    if (!material.url) {
+      setLoadError(material.storageError || "Download link is unavailable.");
+      return;
+    }
+    previewLifecycleRef.current?.open(material);
+  }
+
   async function deleteMaterial() {
     if (!deleteTarget || !supabase) return;
     setDeleteBusy(true);
@@ -486,7 +523,7 @@ export default function MaterialsPanel({
         .delete().eq("storage_path", deleteTarget.path).eq("user_id", authData.user.id);
       if (rowError) throw rowError;
       setMaterials((current) => current.filter((item) => item.path !== deleteTarget.path));
-      setSelectedMaterial((current) => current?.path === deleteTarget.path ? null : current);
+      if (selectedMaterial?.path === deleteTarget.path) closePreview();
       const { error: fileError } = await supabase.storage.from(BUCKET).remove([deleteTarget.path]);
       if (fileError) {
         notify(`Material record removed, but its file cleanup failed: ${storageErrorMessage(fileError)}`);
@@ -509,7 +546,7 @@ export default function MaterialsPanel({
       const { data: authData, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!authData.user) throw new Error("Sign in again to change sharing.");
-      const nextShared = !material.isShared;
+      const nextShared = nextMaterialSharingValue(material.isShared);
       const { error } = await supabase.from("study_materials")
         .update({ is_shared: nextShared })
         .eq("user_id", authData.user.id)
@@ -634,7 +671,7 @@ export default function MaterialsPanel({
           const row = (
             <article className={styles.item} key={material.id}>
               <span className={styles.fileIcon}><FileText size={18} /></span>
-              <button type="button" className={styles.materialInfo} onClick={() => setSelectedMaterial(material)}>
+              <button type="button" className={styles.materialInfo} onClick={() => openMaterialPreview(material)} disabled={previewLoading}>
                 <strong title={material.name}>{material.name}</strong>
                 <small>{courseName} · {materialType(material)} · {formatSize(material.size)} · Uploaded by {uploaderLabel} · {formatDate(material.addedAt)}</small>
                 {material.storageError && <small className={styles.itemError}>{material.storageError}</small>}
@@ -642,8 +679,9 @@ export default function MaterialsPanel({
               </button>
               {material.userId === currentUserId && isPdf && !material.isIndexed && <button type="button" className={styles.index} onClick={() => indexMaterial(material)} disabled={isIndexing} title={material.indexError || "Index PDF for AI study"}>{isIndexing ? <LoaderCircle size={14} /> : "Retry index"}</button>}
       {material.userId === currentUserId && <button type="button" className={material.isShared ? styles.shared : styles.share} onClick={() => toggleSharedMaterial(material)} disabled={sharingPaths.has(material.path)} aria-pressed={material.isShared} title={material.isShared ? "Turn off student access to this material" : "Share this material with signed-in students"}><Share2 size={14} /><span>{sharingPaths.has(material.path) ? "Saving…" : material.isShared ? "Shared" : "Private"}</span></button>}
-              <button type="button" className={styles.open} onClick={() => material.url ? setSelectedMaterial(material) : setLoadError(material.storageError || "Download link is unavailable.")} aria-label={`Preview ${material.name}`} title="Preview material"><Eye size={15} /></button>
-              {material.url && <a className={styles.download} href={material.url} download={material.name} target="_blank" rel="noreferrer" title="Download file" aria-label={`Download ${material.name}`}><Download size={15} /></a>}
+              <button type="button" className={styles.open} onClick={() => openMaterialPreview(material)} disabled={previewLoading} aria-label={`Preview ${material.name}`} title="Preview material"><Eye size={15} /></button>
+              {material.downloadUrl && <a className={styles.download} href={material.downloadUrl} download={material.name} target="_blank" rel="noreferrer" title="Download file" aria-label={`Download ${material.name}`}><Download size={15} /></a>}
+              {material.downloadError && <small className={styles.itemError}>{material.downloadError}</small>}
               {material.userId === currentUserId && <button type="button" className={styles.remove} onClick={() => setDeleteTarget(material)} title="Delete material" aria-label={`Delete ${material.name}`}><Trash2 size={15} /></button>}
             </article>
           );
@@ -657,11 +695,11 @@ export default function MaterialsPanel({
 
       {compact && <button type="button" className={styles.viewAll} onClick={() => onOpenCourses?.("Materials")}>View all materials <span>→</span></button>}
 
-      {selectedMaterial && <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedMaterial(null); }}>
+      {selectedMaterial && <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closePreview(); }}>
         <section ref={dialogRef} className={styles.previewDialog} role="dialog" aria-modal="true" aria-labelledby="material-preview-title" tabIndex={-1}>
-          <div className={styles.previewHeader}><div><h3 id="material-preview-title">{selectedMaterial.name}</h3><p>{courseNames.get(String(selectedCourseId(selectedMaterial))) || "Unassigned"} · {formatDate(selectedMaterial.addedAt)}</p></div><button type="button" onClick={() => setSelectedMaterial(null)} aria-label="Close preview"><X size={17} /></button></div>
-          {selectedMaterial.url && materialType(selectedMaterial) === "PDF" ? <iframe className={styles.pdfPreview} title={`Preview of ${selectedMaterial.name}`} src={selectedMaterial.url} /> : selectedMaterial.url && ["PNG", "JPG", "JPEG", "WEBP", "GIF"].includes(materialType(selectedMaterial)) ? <img className={styles.imagePreview} src={selectedMaterial.url} alt={selectedMaterial.name} /> : <div className={styles.unsupportedPreview}><FileText size={28} /><p>Preview is not available for this format. Download the file to open it.</p></div>}
-          <div className={styles.previewFooter}>{selectedMaterial.url && <a href={selectedMaterial.url} download={selectedMaterial.name} target="_blank" rel="noreferrer"><Download size={14} /> Download</a>}<button type="button" onClick={() => setSelectedMaterial(null)}>Close</button></div>
+          <div className={styles.previewHeader}><div><h3 id="material-preview-title">{selectedMaterial.name}</h3><p>{courseNames.get(String(selectedCourseId(selectedMaterial))) || "Unassigned"} · {formatDate(selectedMaterial.addedAt)}</p></div><button type="button" onClick={closePreview} aria-label="Close preview"><X size={17} /></button></div>
+          {previewLoading ? <div className={styles.unsupportedPreview}><LoaderCircle size={24} /><p>Checking file before preview…</p></div> : previewError ? <div className={styles.unsupportedPreview}><AlertCircle size={24} /><p>{previewError}</p></div> : selectedMaterial.previewUrl && materialType(selectedMaterial) === "PDF" ? <><iframe className={styles.pdfPreview} title={`Preview of ${selectedMaterial.name}`} src={selectedMaterial.previewUrl} sandbox="" /><p className={styles.previewFallback}>If the PDF viewer does not render, use the safe download link below.</p></> : selectedMaterial.previewUrl && ["PNG", "JPG", "JPEG", "WEBP", "GIF"].includes(materialType(selectedMaterial)) ? <img className={styles.imagePreview} src={selectedMaterial.previewUrl} alt={selectedMaterial.name} /> : <div className={styles.unsupportedPreview}><FileText size={28} /><p>Preview is not available for this format. Download the file to open it.</p></div>}
+          <div className={styles.previewFooter}>{selectedMaterial.downloadUrl ? <a href={selectedMaterial.downloadUrl} download={selectedMaterial.name} target="_blank" rel="noreferrer"><Download size={14} /> Download</a> : selectedMaterial.downloadError && <p className={styles.itemError}>{selectedMaterial.downloadError}</p>}<button type="button" onClick={closePreview}>Close</button></div>
         </section>
       </div>}
 
