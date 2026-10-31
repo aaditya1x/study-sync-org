@@ -17,6 +17,5 @@ export default function Sidebar({ items, active, onChange, mobileOpen = false, o
         </button>
       )}
     </section>)}</nav>
-    {!collapsed && <div className={styles.bottom}><strong>Your learning space</strong><p>Study materials, courses and progress in one place.</p></div>}
   </aside>;
 }
