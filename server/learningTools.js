@@ -12,15 +12,16 @@ export function authorizeLearningAction(role, action) {
 }
 
 export function getStudentCourseIds(profile, courses, mappings, userId) {
-  if (!profile || !profile.branch_id || profile.semester === null || profile.semester === undefined || !Number.isInteger(Number(profile.semester))) {
+  if (!profile || !profile.degree_id || !profile.branch_id || profile.semester === null || profile.semester === undefined || !Number.isInteger(Number(profile.semester))) {
     throw Object.assign(new Error("Complete your academic profile, including branch and semester, to view practice tests."), { status: 409 });
   }
   const mapped = new Set((mappings || []).filter((row) => row.branch_id === profile.branch_id).map((row) => row.course_id));
   return [...new Set((courses || []).filter((course) => {
     const inAllocation = course.semester === Number(profile.semester)
       && (!course.academic_cycle_id || course.academic_cycle_id === profile.academic_cycle_id)
-      && (profile.year_level == null || course.year_level == null || Number(course.year_level) === Number(profile.year_level));
-    const visible = course.owner_id === userId || mapped.has(course.id);
+      && (profile.year_level == null || course.year_level == null || Number(course.year_level) === Number(profile.year_level))
+      && course.degree_id === profile.degree_id;
+    const visible = course.owner_id === userId || course.branch_id === profile.branch_id || mapped.has(course.id);
     return inAllocation && visible && !course.archived_at;
   }).map((course) => course.id))];
 }

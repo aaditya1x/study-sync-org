@@ -47,7 +47,7 @@ async function identity(token) {
 
 async function studentCourseIds(userId) {
   const { data: profile, error: profileError } = await admin.from("academic_profiles")
-    .select("branch_id, academic_cycle_id, year_level, semester").eq("user_id", userId).maybeSingle();
+    .select("degree_id, branch_id, academic_cycle_id, year_level, semester").eq("user_id", userId).maybeSingle();
   if (profileError) throw profileError;
   const { data: courses, error: coursesError } = await admin.from("courses")
     .select("id, owner_id, branch_id, academic_cycle_id, year_level, semester, archived_at").limit(2000);
@@ -56,7 +56,21 @@ async function studentCourseIds(userId) {
     ? await admin.from("course_branch_visibility").select("course_id, branch_id").eq("branch_id", profile.branch_id)
     : { data: [], error: null };
   if (mappingsError) throw mappingsError;
-  return getStudentCourseIds(profile, courses || [], mappings || [], userId);
+  const branchIds = [...new Set([
+    ...(courses || []).map((course) => course.branch_id),
+    ...(mappings || []).map((mapping) => mapping.branch_id),
+  ].filter(Boolean))];
+  const { data: branches, error: branchesError } = branchIds.length
+    ? await admin.from("academic_branches").select("id, degree_id").in("id", branchIds)
+    : { data: [], error: null };
+  if (branchesError) throw branchesError;
+  const degreesByBranch = new Map((branches || []).map((branch) => [branch.id, branch.degree_id]));
+  const mappedBranchByCourse = new Map((mappings || []).map((mapping) => [mapping.course_id, mapping.branch_id]));
+  const allocatedCourses = (courses || []).map((course) => ({
+    ...course,
+    degree_id: degreesByBranch.get(mappedBranchByCourse.get(course.id)) || degreesByBranch.get(course.branch_id) || null,
+  }));
+  return getStudentCourseIds(profile, allocatedCourses, mappings || [], userId);
 }
 
 async function listTests(userId) {
@@ -295,9 +309,22 @@ async function generateQuestions(input) {
   if (sourceText.trim().length < 300) throw Object.assign(new Error("The verified syllabus PDF has too little extractable text to ground questions. No questions were generated."), { status: 422, code: "SOURCE_CONTENT_INSUFFICIENT" });
   const normalizeSourceText = (value) => String(value).normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
   if (!normalizeSourceText(sourceText).includes(normalizeSourceText(topic.title))) throw Object.assign(new Error("The selected topic could not be found in its linked verified syllabus PDF. No questions were generated."), { status: 422, code: "SOURCE_TOPIC_NOT_FOUND" });
-  const { data: course, error: courseError } = await admin.from("courses").select("name,title,code,course_code,degree_id,branch_id,academic_cycle_id,semester").eq("id", input.course_id).single();
+  const { data: course, error: courseError } = await admin.from("courses").select("name,title,code,course_code,branch_id,academic_cycle_id,semester").eq("id", input.course_id).single();
   if (courseError) throw courseError;
-  if ((input.degree_id && input.degree_id !== course.degree_id) || (input.branch_id && input.branch_id !== course.branch_id)
+  const allocationBranchId = input.branch_id || course.branch_id;
+  const { data: targetBranch, error: branchError } = allocationBranchId
+    ? await admin.from("academic_branches").select("id,degree_id").eq("id", allocationBranchId).maybeSingle()
+    : { data: null, error: null };
+  if (branchError) throw branchError;
+  let branchVisible = !input.branch_id || input.branch_id === course.branch_id;
+  if (input.branch_id && !branchVisible) {
+    const { data: mapping, error: mappingError } = await admin.from("course_branch_visibility")
+      .select("course_id").eq("course_id", input.course_id).eq("branch_id", input.branch_id).maybeSingle();
+    if (mappingError) throw mappingError;
+    branchVisible = Boolean(mapping);
+  }
+  if ((input.branch_id && !targetBranch) || (input.degree_id && input.degree_id !== targetBranch?.degree_id)
+      || !branchVisible
       || (input.academic_cycle_id && input.academic_cycle_id !== course.academic_cycle_id)
       || (input.semester && Number(input.semester) !== Number(course.semester))) throw fail("The selected subject does not match the requested academic allocation.");
   const prompt = buildQuestionGenerationPrompt({

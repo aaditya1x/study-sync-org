@@ -181,11 +181,16 @@ export default async function handler(req, res) {
           const branchRows = await admin.from("academic_staff_branches").select("user_id, branch_id, created_at");
           if (branchRows.error) throw branchRows.error;
           const ids = (teachers || []).map((row) => row.user_id);
-          const userResults = await Promise.all(ids.map((id) => admin.auth.admin.getUserById(id)));
+          const [userResults, profiles] = await Promise.all([
+            Promise.all(ids.map((id) => admin.auth.admin.getUserById(id))),
+            ids.length ? admin.from("academic_profiles").select("user_id,degree_id").in("user_id", ids) : Promise.resolve({ data: [], error: null }),
+          ]);
+          if (profiles.error) throw profiles.error;
           const users = userResults.map((result) => result.data?.user).filter(Boolean);
+          const profileById = new Map((profiles.data || []).map((profile) => [profile.user_id, profile]));
           const branches = await admin.from("academic_branches").select("id, name, degree_id");
           if (branches.error) throw branches.error;
-          return res.status(200).json({ data: teachers.map((row) => ({ ...row, user: users.find((candidate) => candidate.id === row.user_id), branches: branchRows.data.filter((assignment) => assignment.user_id === row.user_id).map((assignment) => branches.data.find((branch) => branch.id === assignment.branch_id)).filter(Boolean) })) });
+          return res.status(200).json({ data: teachers.map((row) => ({ ...row, user: users.find((candidate) => candidate.id === row.user_id), academic_profile: profileById.get(row.user_id) || null, branches: branchRows.data.filter((assignment) => assignment.user_id === row.user_id).map((assignment) => branches.data.find((branch) => branch.id === assignment.branch_id)).filter(Boolean) })) });
         }
         return res.status(200).json({ data: await listEntity(body.entity, Boolean(body.includeArchived)) });
       case "set_role": {

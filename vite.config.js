@@ -16,6 +16,8 @@ function localApiPlugin() {
     "/api/learning": () => loadApiHandler("learning.js"),
     "/api/index-book": () => loadApiHandler("index-book.js"),
     "/api/ask-book": () => loadApiHandler("ask-book.js"),
+    "/api/contact": () => loadApiHandler("contact.js"),
+    "/api/syllabus-import": () => loadApiHandler("syllabus-import.js"),
   };
 
   return {

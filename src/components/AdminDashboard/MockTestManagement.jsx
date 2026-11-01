@@ -27,25 +27,29 @@ export default function MockTestManagement() {
   const [academicDegrees, setAcademicDegrees] = useState([]);
   const [academicBranches, setAcademicBranches] = useState([]);
   const [academicCycles, setAcademicCycles] = useState([]);
+  const [courseBranchMappings, setCourseBranchMappings] = useState([]);
   const [allocation, setAllocation] = useState({ degree_id: "", branch_id: "", academic_cycle_id: "", semester: "" });
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const [available, bank, attempts, insight, courseResult, unitResult, topicResult, degreeResult, branchResult, cycleResult] = await Promise.all([
+      const [available, bank, attempts, insight, courseResult, unitResult, topicResult, degreeResult, branchResult, cycleResult, mappingResult] = await Promise.all([
         learningRequest("admin-list"), learningRequest("admin-questions"), learningRequest("admin-results"), learningRequest("admin-analytics"),
-        supabase.from("courses").select("id,name,title,code,course_code,degree_id,branch_id,academic_cycle_id,year_level,semester").order("name"),
+        supabase.from("courses").select("id,name,title,code,course_code,branch_id,academic_cycle_id,year_level,semester").order("name"),
         supabase.from("academic_units").select("id,course_id,title,position").is("archived_at", null).order("position"),
         supabase.from("academic_topics").select("id,chapter_id,title,position").is("archived_at", null).order("position"),
         supabase.from("academic_degrees").select("id,name").order("name"),
         supabase.from("academic_branches").select("id,degree_id,name").order("name"),
         supabase.from("academic_cycles").select("id,label").order("label"),
+        supabase.from("course_branch_visibility").select("course_id,branch_id"),
       ]);
       for (const result of [courseResult, unitResult, topicResult, degreeResult, branchResult, cycleResult]) if (result.error) throw result.error;
+      if (mappingResult.error && !["42P01", "PGRST205"].includes(mappingResult.error.code)) throw mappingResult.error;
       setConfigs(available || []); setQuestions(bank || []); setResults(attempts || []);
       setAnalytics(insight || null);
       setCourses(courseResult.data || []); setUnits(unitResult.data || []); setTopics(topicResult.data || []);
       setAcademicDegrees(degreeResult.data || []); setAcademicBranches(branchResult.data || []); setAcademicCycles(cycleResult.data || []);
+      setCourseBranchMappings(mappingResult.error ? [] : mappingResult.data || []);
     } catch (failure) { setError(failure.message || "Learning management data could not be loaded."); }
     finally { setLoading(false); }
   }, []);
@@ -65,10 +69,14 @@ export default function MockTestManagement() {
     const course = courses.find((item) => item.id === unit?.course_id);
     return { topic, chapter, unit, course };
   }).filter((item) => item.unit && item.chapter);
-  const allocationCourses = courses.filter((course) => (!allocation.degree_id || course.degree_id === allocation.degree_id)
-    && (!allocation.branch_id || course.branch_id === allocation.branch_id)
+  const allocationCourses = courses.filter((course) => {
+    const mappedToBranch = courseBranchMappings.some((mapping) => mapping.course_id === course.id && mapping.branch_id === allocation.branch_id);
+    const allocatedBranchId = allocation.branch_id && mappedToBranch ? allocation.branch_id : course.branch_id;
+    return (!allocation.degree_id || academicBranches.find((branch) => branch.id === allocatedBranchId)?.degree_id === allocation.degree_id)
+    && (!allocation.branch_id || course.branch_id === allocation.branch_id || mappedToBranch)
     && (!allocation.academic_cycle_id || course.academic_cycle_id === allocation.academic_cycle_id)
-    && (!allocation.semester || Number(course.semester) === Number(allocation.semester)));
+    && (!allocation.semester || Number(course.semester) === Number(allocation.semester));
+  });
 
   async function submitConfig(event) {
     event.preventDefault(); setSaving(true); setError(""); setNotice("");

@@ -60,6 +60,13 @@
 .assignControl { display:flex; align-items:center; gap:5px; }
 .assignControl select { max-width:130px; padding:6px; border:1px solid var(--line); border-radius:7px; background:var(--surface); color:var(--text); font-size:9px; }
 .assignControl button { padding:6px 8px; border:1px solid var(--primary-action); border-radius:7px; color:var(--on-primary); background:var(--primary-action); font-size:9px; }
+.actions { min-width:180px; }
+.inlineEditor { position:relative; display:inline-block; margin:2px; vertical-align:top; }
+.inlineEditorPanel { position:absolute; z-index:5; top:calc(100% + 5px); right:0; display:grid; width:min(260px,75vw); gap:7px; padding:9px; border:1px solid var(--line); border-radius:9px; color:var(--text); background:var(--surface); box-shadow:var(--shadow); white-space:normal; }
+.inlineEditorPanel small { color:var(--muted); line-height:1.4; }
+.inlineEditorPanel select { width:100%; max-width:none; min-height:72px; }
+.inlineEditorPanel button { min-height:30px; padding:6px 8px; border:1px solid var(--primary-action); border-radius:7px; color:var(--on-primary); background:var(--primary-action); font-size:9px; font-weight:750; }
+.inlineEditorPanel button:disabled { opacity:.55; cursor:not-allowed; }
 .pager { display:flex; justify-content:flex-end; align-items:center; gap:8px; color:var(--muted); font-size:9px; }
 .pager button { min-height:28px; padding:5px 8px; }
 .error { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border:1px solid color-mix(in srgb,var(--danger) 35%,var(--line)); border-radius:9px; color:var(--danger); background:color-mix(in srgb,var(--danger) 7%,var(--surface)); font-size:10px; overflow-wrap:anywhere; }

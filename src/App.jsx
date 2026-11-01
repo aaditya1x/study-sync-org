@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   BookOpen,
@@ -19,23 +19,23 @@ import { AppShell } from "./components/AppShell/index.js";
 import { Navbar } from "./components/Navbar/index.js";
 import { Sidebar } from "./components/Sidebar/index.js";
 import { StatCard } from "./components/StatCard/index.js";
-import { CourseLibrary } from "./components/CourseLibrary/index.js";
-import AcademicHub from "./components/AcademicHub/AcademicHub.jsx";
-import AdminDashboard from "./components/AdminDashboard/AdminDashboard.jsx";
-import { MaterialsPanel } from "./components/MaterialsPanel/index.js";
-import { SyllabusLibrary } from "./components/SyllabusLibrary/index.js";
-import { TasksPanel } from "./components/TasksPanel/index.js";
-import { AIStudyTools } from "./components/AIStudyTools/index.js";
+const CourseLibrary = lazy(() => import("./components/CourseLibrary/index.js").then((module) => ({ default: module.CourseLibrary })));
+const AcademicHub = lazy(() => import("./components/AcademicHub/AcademicHub.jsx"));
+const AdminDashboard = lazy(() => import("./components/AdminDashboard/AdminDashboard.jsx"));
+const MaterialsPanel = lazy(() => import("./components/MaterialsPanel/index.js").then((module) => ({ default: module.MaterialsPanel })));
+const SyllabusLibrary = lazy(() => import("./components/SyllabusLibrary/index.js").then((module) => ({ default: module.SyllabusLibrary })));
+const TasksPanel = lazy(() => import("./components/TasksPanel/index.js").then((module) => ({ default: module.TasksPanel })));
+const AIStudyTools = lazy(() => import("./components/AIStudyTools/index.js").then((module) => ({ default: module.AIStudyTools })));
 import FloatingAIAssistant from "./components/AIStudyTools/FloatingAIAssistant.jsx";
-import { ProgressReport } from "./components/ProgressReport/index.js";
-import { SettingsPanel } from "./components/SettingsPanel/index.js";
+const ProgressReport = lazy(() => import("./components/ProgressReport/index.js").then((module) => ({ default: module.ProgressReport })));
+const SettingsPanel = lazy(() => import("./components/SettingsPanel/index.js").then((module) => ({ default: module.SettingsPanel })));
 import { Toast } from "./components/Toast/index.js";
-import { Login } from "./components/Login/index.js";
-import AcademicProfile from "./components/AcademicProfile/AcademicProfile.jsx";
-import AcademicAssignments from "./components/AcademicAssignments/AcademicAssignments.jsx";
-import MockTests from "./components/MockTests/MockTests.jsx";
-import PreviousYearQuestions from "./components/PreviousYearQuestions/PreviousYearQuestions.jsx";
-import ContactUs from "./components/ContactUs/ContactUs.jsx";
+const Login = lazy(() => import("./components/Login/index.js").then((module) => ({ default: module.Login })));
+const AcademicProfile = lazy(() => import("./components/AcademicProfile/AcademicProfile.jsx"));
+const AcademicAssignments = lazy(() => import("./components/AcademicAssignments/AcademicAssignments.jsx"));
+const MockTests = lazy(() => import("./components/MockTests/MockTests.jsx"));
+const PreviousYearQuestions = lazy(() => import("./components/PreviousYearQuestions/PreviousYearQuestions.jsx"));
+const ContactUs = lazy(() => import("./components/ContactUs/ContactUs.jsx"));
 import { LegalPage, PublicLanding } from "./components/PublicSite.jsx";
 
 import { usePersistentState } from "./hooks/usePersistentState.js";
@@ -520,8 +520,8 @@ async function handleLogout() {
     setMaterials,
     tasks,
     setTasks,
-    taskSyncStatus,
-    taskSyncError,
+    syncStatus: taskSyncStatus,
+    syncError: taskSyncError,
     notify,
     query,
     setQuery,
@@ -573,7 +573,7 @@ async function handleLogout() {
 
   if (currentPath === "/terms") return <LegalPage type="terms" />;
   if (currentPath === "/privacy") return <LegalPage type="privacy" />;
-  if (currentPath === "/contact") return <div className={styles.publicContact}><ContactUs /></div>;
+  if (currentPath === "/contact") return <div className={styles.publicContact}><Suspense fallback={<p role="status">Loading contact form…</p>}><ContactUs /></Suspense></div>;
 
   if (authLoading) {
     return <main className={styles.loading} aria-live="polite">Loading your workspace…</main>;
@@ -581,7 +581,7 @@ async function handleLogout() {
 
   if (!session?.authenticated || isPasswordRecoveryFlow || passwordRecovery) {
     if (!isPasswordRecoveryFlow && !passwordRecovery && currentPath === "/") return <PublicLanding />;
-    return <Login onLogin={handleLogin} initialMode={isPasswordRecoveryFlow || passwordRecovery ? "reset" : currentPath === "/signup" ? "signup" : undefined} onExitRecovery={() => setPasswordRecovery(false)} />;
+    return <Suspense fallback={<main className={styles.loading} role="status">Loading sign in…</main>}><Login onLogin={handleLogin} initialMode={isPasswordRecoveryFlow || passwordRecovery ? "reset" : currentPath === "/signup" ? "signup" : undefined} onExitRecovery={() => setPasswordRecovery(false)} /></Suspense>;
   }
 
   const workspaceAccess = getWorkspaceAccess({
@@ -600,7 +600,7 @@ async function handleLogout() {
   if (workspaceAccess === "profile-loading") return <main className={styles.loading} aria-live="polite">Preparing your academic workspace…</main>;
   if (workspaceAccess === "profile-error") return <main className={styles.loading} role="alert">Could not verify your academic profile: {academicProfileError}</main>;
   if (workspaceAccess === "onboarding") {
-    return <AcademicProfile onboarding onSaved={(profile) => { setAcademicProfile(profile); setActive("Dashboard"); }} />;
+    return <Suspense fallback={<main className={styles.loading} role="status">Loading profile…</main>}><AcademicProfile onboarding onSaved={(profile) => { setAcademicProfile(profile); setActive("Dashboard"); }} /></Suspense>;
   }
 
   return (
@@ -624,6 +624,7 @@ async function handleLogout() {
         onToggleCollapse={() => setSidebarCollapsed((value) => !value)}
       />
 
+      <Suspense fallback={<main className={styles.main}><div className={styles.loading} role="status">Loading section…</div></main>}>
       <main className={styles.main}>
         <Navbar
           title={title}
@@ -829,6 +830,7 @@ async function handleLogout() {
 
         {active === "Admin" && platformRole === "super_admin" && <AdminDashboard notify={notify} />}
       </main>
+      </Suspense>
 
       <FloatingAIAssistant userId={session?.userId} role={platformRole} pageContext={aiPageContext} onNavigate={onAINavigate} />
       <Toast message={toast} />

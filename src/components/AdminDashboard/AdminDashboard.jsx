@@ -50,6 +50,14 @@ export default function AdminDashboard({ notify }) {
   const [page, setPage] = useState(1);
   const [draft, setDraft] = useState({});
   const [saving, setSaving] = useState(false);
+  const [teacherBranches, setTeacherBranches] = useState([]);
+  const [currentUserId, setCurrentUserId] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    supabase?.auth.getUser().then(({ data }) => { if (active) setCurrentUserId(data.user?.id || ""); });
+    return () => { active = false; };
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -60,7 +68,13 @@ export default function AdminDashboard({ notify }) {
         return;
       }
       if (section === "users") {
-        setData(await adminRequest("users", { page }));
+        const [users, branches] = await Promise.all([
+          adminRequest("users", { page }),
+          supabase.from("academic_branches").select("id,degree_id,name").is("archived_at", null).order("name"),
+        ]);
+        if (branches.error) throw branches.error;
+        setData(users);
+        setTeacherBranches(branches.data || []);
         return;
       }
       if (section === "catalog") {
@@ -87,7 +101,13 @@ export default function AdminDashboard({ notify }) {
         return;
       }
       if (section === "teachers") {
-        setData(await adminRequest("list", { entity: "teachers" }));
+        const [teachers, branches] = await Promise.all([
+          adminRequest("list", { entity: "teachers" }),
+          supabase.from("academic_branches").select("id,degree_id,name").is("archived_at", null).order("name"),
+        ]);
+        if (branches.error) throw branches.error;
+        setData(teachers);
+        setTeacherBranches(branches.data || []);
         return;
       }
       if (section === "assignments") {
@@ -130,8 +150,10 @@ export default function AdminDashboard({ notify }) {
       if (["overview", "courses", "assignments", "resources", "users", "teachers"].includes(section)) {
         setOverview(await adminRequest("overview"));
       }
+      return true;
     } catch (saveError) {
       setError(saveError.message || "The action failed.");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -142,6 +164,30 @@ export default function AdminDashboard({ notify }) {
     const label = role === "super_admin" ? "grant Super Admin access to" : `change ${person.email} to ${role}`;
     if (!window.confirm(`Confirm: ${label}? This action is recorded in the audit log.`)) return;
     await run("set_role", { userId: person.id, role }, "User role updated.");
+  }
+
+  async function approveTeacher(person, branchIds) {
+    if (!branchIds.length) { setError("Select at least one branch for this teacher."); return; }
+    if (!window.confirm(`Approve ${person.email || person.id} as a teacher for ${branchIds.length} selected branch(es)?`)) return;
+    await run("approve_teacher", { userId: person.id, branchIds }, "Teacher approved and branch assignments saved.");
+  }
+
+  async function saveTeacherBranches(person, branchIds) {
+    if (!branchIds.length) { setError("Teachers must retain at least one assigned branch."); return; }
+    if (!window.confirm(`Replace ${person.user?.email || person.user_id}'s branch assignments?`)) return;
+    return run("set_teacher_branches", { userId: person.user_id, branchIds }, "Teacher branch assignments updated.");
+  }
+
+  async function suspendStudent(person) {
+    const reason = window.prompt(`Reason for suspending ${person.email || person.id} (optional):`, "");
+    if (reason === null) return;
+    if (!window.confirm("Suspend this student in both CampusFlow and Supabase Auth?")) return;
+    await run("suspend_student", { userId: person.id, reason }, "Student account suspended.");
+  }
+
+  async function restoreStudent(person) {
+    if (!window.confirm(`Restore ${person.email || person.id} in Supabase Auth and CampusFlow?`)) return;
+    await run("restore_student", { userId: person.id }, "Student account restored.");
   }
 
   async function archive(entity, row, archived = true) {
@@ -171,7 +217,7 @@ export default function AdminDashboard({ notify }) {
         {error && <div className={styles.error} role="alert"><span>{error}</span><button type="button" onClick={refresh}>Retry</button></div>}
         {loading ? <div className={styles.loading} role="status">Loading verified platform data…</div> : <>
           {section === "overview" && <Overview data={overview} onGo={setSection}/>}
-          {section === "users" && <UserManagement rows={visibleRows} page={page} search={search} setSearch={setSearch} setPage={setPage} onRole={changeRole} />}
+          {section === "users" && <UserManagement rows={visibleRows} page={page} search={search} setSearch={setSearch} setPage={setPage} onRole={changeRole} onApproveTeacher={approveTeacher} onSuspend={suspendStudent} onRestore={restoreStudent} branches={teacherBranches} currentUserId={currentUserId} saving={saving} />}
           {section === "catalog" && data && <CatalogManagement data={data} onRefresh={refresh} notify={notify}/>}
           {section === "courses" && <CourseManagement rows={visibleRows} search={search} setSearch={setSearch} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity} onArchive={archive}/>}
           {section === "curriculum" && <CurriculumManagement data={auxiliary} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity} onArchive={archive}/>}
@@ -179,7 +225,7 @@ export default function AdminDashboard({ notify }) {
           {section === "contact" && <ContactInbox/>}
           {section === "assignments" && <AssignmentManagement rows={visibleRows} courses={auxiliary.courses} search={search} setSearch={setSearch} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity} onArchive={archive}/>}
           {section === "resources" && <ResourceManagement rows={visibleRows} search={search} setSearch={setSearch} saving={saving} onSave={run} onArchive={archive}/>}
-          {section === "teachers" && <TeacherManagement rows={visibleRows} search={search} setSearch={setSearch} />}
+          {section === "teachers" && <TeacherManagement rows={visibleRows} branches={teacherBranches} search={search} setSearch={setSearch} onSaveBranches={saveTeacherBranches} saving={saving} />}
           {section === "announcements" && <AnnouncementManagement rows={visibleRows} search={search} setSearch={setSearch} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity} onArchive={archive}/>}
           {section === "audit" && <AuditLogs rows={visibleRows} search={search} setSearch={setSearch}/>}
           {section === "settings" && <SettingsManagement rows={visibleRows} search={search} setSearch={setSearch} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity}/>}
@@ -207,17 +253,34 @@ function Overview({ data, onGo }) {
   </>;
 }
 
-function UserManagement({ rows, page, search, setSearch, setPage, onRole }) {
+function UserManagement({ rows, page, search, setSearch, setPage, onRole, onApproveTeacher, onSuspend, onRestore, branches, currentUserId, saving }) {
   return <>
-    <p className={styles.help}>Teacher and Super Admin promotions, and suspension or restore actions, are temporarily disabled pending the secure provisioning and coordinated suspension workflows.</p>
+    <p className={styles.help}>Teacher approval and student suspension use the authenticated, atomic Super Admin workflows. Super Admin roles cannot be changed here.</p>
     <SearchBox search={search} setSearch={setSearch} placeholder="Search account email or name"/>
-    <div className={styles.tableWrap}><table><thead><tr><th>Account</th><th>Role</th><th>Joined</th><th>Last sign in</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows.map((person)=><tr key={person.id}><td><strong>{person.name || "Unnamed account"}</strong><small>{person.email}</small></td><td><span className={person.role === "super_admin" ? styles.badgeWarn : styles.badge}>{person.role.replace("_", " ")}</span></td><td>{displayDate(person.created_at)}</td><td>{displayDate(person.last_sign_in_at)}</td><td><span className={person.is_suspended ? styles.badgeWarn : styles.badge}>{person.is_suspended ? `Suspended${person.banned_until ? ` until ${displayDate(person.banned_until)}` : " (database access blocked)"}` : "Active"}</span></td><td>{person.role === "teacher" ? <button type="button" className={styles.smallAction} onClick={() => onRole(person, "student")}>Demote to student</button> : <span className={styles.muted}>{person.role === "super_admin" ? "Super Admin protected" : "No role change"}</span>}</td></tr>)}</tbody></table>{!rows.length && <Empty text="No user accounts on this page match the search."/>}</div>
+    <div className={styles.tableWrap}><table><thead><tr><th>Account</th><th>Role</th><th>Joined</th><th>Last sign in</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows.map((person)=><tr key={person.id}><td><strong>{person.name || "Unnamed account"}</strong><small>{person.email}</small></td><td><span className={person.role === "super_admin" ? styles.badgeWarn : styles.badge}>{person.role.replace("_", " ")}</span></td><td>{displayDate(person.created_at)}</td><td>{displayDate(person.last_sign_in_at)}</td><td><span className={person.is_suspended ? styles.badgeWarn : styles.badge}>{person.is_suspended ? `Suspended${person.banned_until ? ` until ${displayDate(person.banned_until)}` : " (database access blocked)"}` : "Active"}</span></td><td className={styles.actions}>{person.role === "teacher" && <button type="button" className={styles.smallAction} disabled={saving} onClick={() => onRole(person, "student")}>Demote to student</button>}{person.role === "student" && !person.is_suspended && person.id !== currentUserId && <TeacherApprovalAction person={person} branches={branches} saving={saving} onApprove={onApproveTeacher} />}{person.role === "student" && person.id !== currentUserId && (person.is_suspended ? <button type="button" className={styles.smallAction} disabled={saving} onClick={() => onRestore(person)}>Restore account</button> : <button type="button" className={styles.smallAction} disabled={saving} onClick={() => onSuspend(person)}>Suspend student</button>)}{person.role === "super_admin" && <span className={styles.muted}>Super Admin protected</span>}{person.id === currentUserId && <span className={styles.muted}>Current account</span>}</td></tr>)}</tbody></table>{!rows.length && <Empty text="No user accounts on this page match the search."/>}</div>
     <div className={styles.pager}><button type="button" onClick={()=>setPage((value)=>Math.max(1,value-1))} disabled={page===1}><ChevronLeft size={15}/> Previous</button><span>Page {page}</span><button type="button" onClick={()=>setPage((value)=>value+1)} disabled={rows.length<100}>Next <ChevronRight size={15}/></button></div>
   </>;
 }
 
 function CatalogManagement({ data, onRefresh, notify }) {
   return <div className={styles.panel}><div className={styles.panelHeading}><div><h3>Degrees, branches and academic cycles</h3><p>Catalog edits are checked by RLS and create audit events.</p></div><button type="button" className={styles.smallAction} onClick={onRefresh}>Reload catalog</button></div><AcademicCatalogAdmin catalog={data} onCatalogChange={()=>onRefresh()} notify={notify}/></div>;
+}
+
+function TeacherApprovalAction({ person, branches, saving, onApprove }) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const degreeId = person.academic_profile?.degree_id;
+  const choices = branches.filter((branch) => !degreeId || branch.degree_id === degreeId);
+  if (!degreeId) return <span className={styles.muted}>Degree required first</span>;
+  return <div className={styles.inlineEditor}>
+    <button type="button" className={styles.smallAction} disabled={saving || !choices.length} onClick={() => setOpen((value) => !value)}>Approve teacher</button>
+    {open && <div className={styles.inlineEditorPanel}><small>Select branches matching the user's saved degree. The secure RPC validates the selection.</small>
+      <select multiple size={Math.min(5, Math.max(2, choices.length))} value={selected} onChange={(event) => setSelected([...event.target.selectedOptions].map((option) => option.value))} aria-label={`Branches for ${person.email}`}>
+        {choices.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+      </select>
+      <button type="button" disabled={saving || !selected.length} onClick={() => onApprove(person, selected)}>Confirm approval</button>
+    </div>}
+  </div>;
 }
 
 function CourseManagement({ rows, search, setSearch, draft, setDraft, saving, onSave, onArchive }) {
@@ -246,8 +309,17 @@ function ResourceManagement({ rows, search, setSearch, saving, onSave, onArchive
   return <><SearchBox search={search} setSearch={setSearch} placeholder="Search material name or subject"/><div className={styles.tableWrap}><table><thead><tr><th>Resource</th><th>Uploader</th><th>Subject</th><th>Sharing</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows.map((row)=><tr key={row.id}><td><strong>{row.name}</strong><small>{row.type} · {Number(row.size||0).toLocaleString()} bytes</small></td><td>{row.user_id}</td><td>{row.subject||"—"}</td><td><button type="button" className={styles.smallAction} disabled={saving} onClick={()=>onSave("save",{entity:"materials",id:row.id,values:{is_shared:!row.is_shared}},"Resource sharing updated.")}>{row.is_shared?"Shared":"Private"}</button></td><td>{row.archived_at?"Archived":"Active"}</td><td><button type="button" className={styles.smallAction} onClick={()=>onArchive("materials",row,!row.archived_at)}>{row.archived_at?"Restore":"Archive"}</button></td></tr>)}</tbody></table>{!rows.length&&<Empty text="No uploaded resources were found."/>}</div></>;
 }
 
-function TeacherManagement({ rows, search, setSearch }) {
-  return <><p className={styles.help}>Branch assignment changes are temporarily disabled pending the atomic branch-set workflow. Current assignments remain viewable.</p><SearchBox search={search} setSearch={setSearch} placeholder="Search teachers"/><div className={styles.tableWrap}><table><thead><tr><th>Staff member</th><th>Role</th><th>Assigned branches</th></tr></thead><tbody>{rows.map((row)=><tr key={row.user_id}><td><strong>{row.user?.user_metadata?.full_name||row.user?.email||row.user_id}</strong><small>{row.user?.email||row.user_id}</small></td><td><span className={row.role==="super_admin"?styles.badgeWarn:styles.badge}>{row.role.replace("_"," ")}</span></td><td>{row.branches.map((branch)=><span key={branch.id} className={styles.assignmentTag}>{branch.name}</span>)}{row.role==="super_admin"&&<span className={styles.muted}>Global access</span>}</td></tr>)}</tbody></table>{!rows.length&&<Empty text="No teachers or Super Admins have been provisioned."/>}</div></>;
+function TeacherManagement({ rows, branches, search, setSearch, onSaveBranches, saving }) {
+  return <><p className={styles.help}>Branch assignment changes replace the complete set through the authenticated atomic Super Admin workflow.</p><SearchBox search={search} setSearch={setSearch} placeholder="Search teachers"/><div className={styles.tableWrap}><table><thead><tr><th>Staff member</th><th>Role</th><th>Assigned branches</th><th>Actions</th></tr></thead><tbody>{rows.map((row)=><tr key={row.user_id}><td><strong>{row.user?.user_metadata?.full_name||row.user?.email||row.user_id}</strong><small>{row.user?.email||row.user_id}</small></td><td><span className={row.role==="super_admin"?styles.badgeWarn:styles.badge}>{row.role.replace("_"," ")}</span></td><td>{row.branches.map((branch)=><span key={branch.id} className={styles.assignmentTag}>{branch.name}</span>)}{row.role==="super_admin"&&<span className={styles.muted}>Global access</span>}</td><td>{row.role === "teacher" && <TeacherBranchEditor teacher={row} branches={branches} saving={saving} onSave={onSaveBranches}/>}</td></tr>)}</tbody></table>{!rows.length&&<Empty text="No teachers or Super Admins have been provisioned."/>}</div></>;
+}
+
+function TeacherBranchEditor({ teacher, branches, saving, onSave }) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState(teacher.branches.map((branch) => branch.id));
+  const degreeId = teacher.academic_profile?.degree_id;
+  const choices = branches.filter((branch) => !degreeId || branch.degree_id === degreeId);
+  if (!degreeId) return <span className={styles.muted}>Degree required first</span>;
+  return <div className={styles.inlineEditor}><button type="button" className={styles.smallAction} disabled={saving || !choices.length} onClick={() => setOpen((value) => !value)}>Edit branches</button>{open && <div className={styles.inlineEditorPanel}><small>Select the complete replacement assignment set. At least one branch is required.</small><select multiple size={Math.min(5, Math.max(2, choices.length))} value={selected} onChange={(event) => setSelected([...event.target.selectedOptions].map((option) => option.value))} aria-label={`Assigned branches for ${teacher.user?.email || teacher.user_id}`}>{choices.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select><button type="button" disabled={saving || !selected.length} onClick={async () => { if (await onSave(teacher, selected)) setOpen(false); }}>Save branch assignments</button></div>}</div>;
 }
 
 function AnnouncementManagement({ rows, search, setSearch, draft, setDraft, saving, onSave, onArchive }) {

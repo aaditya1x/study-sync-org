@@ -19,6 +19,12 @@ import { buildQuestionGenerationPrompt, difficultyTargets, validateGeneratedQues
 
 const learningMigration = await readFile(new URL("../supabase-migrations/20261110_mock_test_marks.sql", import.meta.url), "utf8");
 const viteConfig = await readFile(new URL("../vite.config.js", import.meta.url), "utf8");
+const learningApiSource = await readFile(new URL("../api/learning.js", import.meta.url), "utf8");
+const mockManagementSource = await readFile(new URL("../src/components/AdminDashboard/MockTestManagement.jsx", import.meta.url), "utf8");
+const adminDashboardSource = await readFile(new URL("../src/components/AdminDashboard/AdminDashboard.jsx", import.meta.url), "utf8");
+const adminApiSource = await readFile(new URL("../api/admin.js", import.meta.url), "utf8");
+const appSource = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
+const taskPanelSource = await readFile(new URL("../src/components/TasksPanel/TasksPanel.jsx", import.meta.url), "utf8");
 
 test("student, teacher, and Super Admin learning access is role-scoped", () => {
   assert.equal(authorizeLearningAction("student", "list-tests"), true);
@@ -62,6 +68,8 @@ test("AI mock questions are source-attributed drafts with validated structure an
 
 test("local Vite serves the learning API and safely diagnoses missing learning schema", () => {
   assert.match(viteConfig, /"\/api\/learning"\s*:\s*\(\)\s*=>\s*loadApiHandler\("learning\.js"\)/);
+  assert.match(viteConfig, /"\/api\/syllabus-import"\s*:\s*\(\)\s*=>\s*loadApiHandler\("syllabus-import\.js"\)/);
+  assert.match(viteConfig, /"\/api\/contact"\s*:\s*\(\)\s*=>\s*loadApiHandler\("contact\.js"\)/);
   assert.deepEqual(mapLearningFailure({ code: "42P01" }), {
     status: 503,
     code: "LEARNING_SCHEMA_UNAVAILABLE",
@@ -96,16 +104,48 @@ test("Mock Tests client reports endpoint status and sanitized Supabase diagnosti
   })), /20261106_learning_assessment_and_papers\.sql \(NOT_APPLIED\)/);
 });
 
-test("published test scope matches student branch, semester, cycle and year", () => {
-  const profile = { branch_id: "branch-a", semester: 3, academic_cycle_id: "cycle-a", year_level: 2 };
+test("published test scope matches student degree, branch, semester, cycle and year", () => {
+  const profile = { degree_id: "degree-a", branch_id: "branch-a", semester: 3, academic_cycle_id: "cycle-a", year_level: 2 };
   const courses = [
-    { id: "mapped", semester: 3, academic_cycle_id: "cycle-a", year_level: 2 },
-    { id: "wrong-semester", semester: 4, academic_cycle_id: "cycle-a", year_level: 2 },
-    { id: "wrong-cycle", semester: 3, academic_cycle_id: "cycle-b", year_level: 2 },
-    { id: "wrong-branch", semester: 3, academic_cycle_id: "cycle-a", year_level: 2, branch_id: "branch-b" },
+    { id: "mapped", semester: 3, academic_cycle_id: "cycle-a", year_level: 2, degree_id: "degree-a" },
+    { id: "wrong-semester", semester: 4, academic_cycle_id: "cycle-a", year_level: 2, degree_id: "degree-a" },
+    { id: "wrong-cycle", semester: 3, academic_cycle_id: "cycle-b", year_level: 2, degree_id: "degree-a" },
+    { id: "wrong-branch", semester: 3, academic_cycle_id: "cycle-a", year_level: 2, branch_id: "branch-b", degree_id: "degree-a" },
+    { id: "wrong-degree", semester: 3, academic_cycle_id: "cycle-a", year_level: 2, branch_id: "branch-a", degree_id: "degree-b" },
+    { id: "direct-branch", semester: 3, academic_cycle_id: "cycle-a", year_level: 2, branch_id: "branch-a", degree_id: "degree-a" },
   ];
-  assert.deepEqual(getStudentCourseIds(profile, courses, [{ course_id: "mapped", branch_id: "branch-a" }], "student-a"), ["mapped"]);
+  assert.deepEqual(getStudentCourseIds(profile, courses, [{ course_id: "mapped", branch_id: "branch-a" }], "student-a"), ["mapped", "direct-branch"]);
   assert.throws(() => getStudentCourseIds(null, courses, [], "student-a"), /Complete your academic profile/);
+});
+
+test("Mock Test degree filters derive degree from academic branch, not a courses.degree_id column", () => {
+  assert.match(learningApiSource, /select\("id, owner_id, branch_id, academic_cycle_id, year_level, semester, archived_at"\)/);
+  assert.match(learningApiSource, /academic_branches"\)\.select\("id, degree_id"\)/);
+  assert.match(learningApiSource, /course_branch_visibility"\)\.select\("course_id, branch_id"\)/);
+  assert.match(learningApiSource, /course_branch_visibility"\)\s*\.select\("course_id"\)/);
+  assert.match(learningApiSource, /select\("name,title,code,course_code,branch_id,academic_cycle_id,semester"\)/);
+  assert.match(mockManagementSource, /select\("id,name,title,code,course_code,branch_id,academic_cycle_id,year_level,semester"\)/);
+  assert.match(mockManagementSource, /academicBranches\.find\(\(branch\) => branch\.id === allocatedBranchId\)\?\.degree_id/);
+  assert.match(mockManagementSource, /courseBranchMappings\.some\(\(mapping\) => mapping\.course_id === course\.id && mapping\.branch_id === allocation\.branch_id\)/);
+  assert.doesNotMatch(learningApiSource, /courses"\)\.select\([^\n]*degree_id/);
+  assert.doesNotMatch(mockManagementSource, /courses"\)\.select\([^\n]*degree_id/);
+});
+
+test("Vite routes every local API function while keeping Contact form behavior separate", async () => {
+  for (const [route, file] of [["contact", "contact"], ["syllabus-import", "syllabus-import"], ["admin", "admin"], ["learning", "learning"], ["index-book", "index-book"], ["ask-book", "ask-book"], ["ai", "ai"]]) {
+    const expected = new RegExp(`"/api/${route}"\\s*:\\s*\\(\\)\\s*=>\\s*loadApiHandler\\("${file}\\.js"\\)`);
+    assert.match(viteConfig, expected, `missing local Vite route /api/${route}`);
+  }
+  assert.match(appSource, /syncStatus: taskSyncStatus/);
+  assert.match(appSource, /syncError: taskSyncError/);
+  assert.match(taskPanelSource, /syncStatus = ""/);
+  assert.match(adminDashboardSource, /onApproveTeacher=\{approveTeacher\}/);
+  assert.match(adminDashboardSource, /onSaveBranches=\{saveTeacherBranches\}/);
+  assert.match(adminDashboardSource, /onSuspend=\{suspendStudent\}/);
+  assert.match(adminDashboardSource, /onRestore=\{restoreStudent\}/);
+  assert.match(adminApiSource, /functionName: "approve_teacher_with_branches"/);
+  assert.match(adminApiSource, /functionName: "set_teacher_branches"/);
+  assert.match(adminApiSource, /verifyActiveSuperAdmin\(\{ authClient, adminClient: admin, accessToken: token \}\)/);
 });
 
 test("practice test generation removes duplicate prompts before counting and selection", () => {

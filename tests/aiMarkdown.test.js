@@ -10,7 +10,8 @@ import remarkRehype from "remark-rehype";
 import rehypeKatex from "rehype-katex";
 import { defaultUrlTransform } from "react-markdown";
 
-const rendererSource = await readFile(new URL("../src/components/AIStudyTools/AIResponseMarkdown.jsx", import.meta.url), "utf8");
+const rendererSource = await readFile(new URL("../src/components/AIStudyTools/AIResponseMarkdownRenderer.jsx", import.meta.url), "utf8");
+const lazyRendererSource = await readFile(new URL("../src/components/AIStudyTools/AIResponseMarkdown.jsx", import.meta.url), "utf8");
 const floatingSource = await readFile(new URL("../src/components/AIStudyTools/FloatingAIAssistant.jsx", import.meta.url), "utf8");
 const studyToolsSource = await readFile(new URL("../src/components/AIStudyTools/AIStudyTools.jsx", import.meta.url), "utf8");
 const mermaidSource = await readFile(new URL("../src/components/AIStudyTools/MermaidDiagram.jsx", import.meta.url), "utf8");
@@ -29,6 +30,7 @@ test("shared AI Markdown pipeline supports formatting, GFM tables and preserved 
 });
 
 test("AI Markdown rendering is safe and used by both assistants", () => {
+  assert.match(lazyRendererSource, /lazy\(\(\) => import\("\.\/AIResponseMarkdownRenderer\.jsx"\)\)/);
   assert.match(rendererSource, /import ReactMarkdown, \{ defaultUrlTransform \} from "react-markdown"/);
   assert.match(rendererSource, /skipHtml/);
   assert.match(rendererSource, /remarkPlugins=\{\[remarkGfm, remarkBreaks, remarkMath\]\}/);
