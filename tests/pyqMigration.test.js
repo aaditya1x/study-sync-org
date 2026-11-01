@@ -74,3 +74,18 @@ test("storage remains private, generated questions stay separate, and no object 
   assert.match(component, /storage\.from\(BUCKET\)\.createSignedUrl/);
   assert.doesNotMatch(component, /storage\.from\(BUCKET\)\.update/);
 });
+
+test("PYQ upload UI is Super Admin-only and requires allocation-matching course metadata", async () => {
+  const component = await readFile(new URL("../src/components/PreviousYearQuestions/PreviousYearQuestions.jsx", import.meta.url), "utf8");
+  assert.match(component, /const isAdmin = role === "super_admin"/);
+  assert.match(component, /\{isAdmin && <section className=\{styles\.admin\}/);
+  for (const field of ["degree_id", "branch_id", "academic_cycle_id", "semester", "course_id", "exam_year", "unit_id"]) {
+    assert.match(component, new RegExp(`name="${field}"`));
+  }
+  assert.match(component, /name="course_id"[\s\S]*?required/);
+  assert.match(component, /selectedCourse\.branch_id !== form\.branch_id/);
+  assert.match(component, /function toggleVerified\(paper\)/);
+  assert.match(component, /storage\.from\(BUCKET\)\.upload/);
+  assert.match(component, /storage\.from\(BUCKET\)\.createSignedUrl/);
+  assert.doesNotMatch(component, /role === "teacher"[\s\S]{0,100}styles\.admin/);
+});

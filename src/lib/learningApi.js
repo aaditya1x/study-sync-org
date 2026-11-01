@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { parseLearningResponse } from "./learningResponse.js";
 
 export async function learningRequest(action, values = {}) {
   if (!supabase) throw new Error("Supabase is not configured.");
@@ -11,9 +12,8 @@ export async function learningRequest(action, values = {}) {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ action, ...values }),
   });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || "The learning request could not be completed.");
-  return result.data;
+  const raw = await response.text();
+  return parseLearningResponse(response.status, response.ok, raw);
 }
 
 export async function sendContactMessage(values) {

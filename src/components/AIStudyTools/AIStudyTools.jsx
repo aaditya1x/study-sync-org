@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import {
   Copy,
   Sparkles,
@@ -6,10 +6,14 @@ import {
   Brain,
   ListChecks,
   LoaderCircle,
-  FileText,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase.js";
+import { getIndexedPdfDocuments } from "../../lib/indexedPdfDocuments.js";
+import { serializeAIRequest } from "../../lib/aiRequest.js";
+import IndexedDocumentPicker from "./IndexedDocumentPicker.jsx";
 import styles from "./AIStudyTools.module.css";
+
+const AIResponseMarkdown = lazy(() => import("./AIResponseMarkdown.jsx"));
 
 const modes = [
   { id: "summarize", label: "Summarize", icon: BookOpen, description: "Turn your notes into a concise revision guide." },
@@ -17,89 +21,48 @@ const modes = [
   { id: "quiz", label: "Quiz", icon: ListChecks, description: "Create practice questions to test your understanding." },
 ];
 
-export default function AIStudyTools({ materials = [], notify = () => {}, onOpenMaterials }) {
+export default function AIStudyTools({ materials = [], notify = () => {}, onOpenMaterials, pageContext }) {
   const [mode, setMode] = useState("summarize");
-  const [source, setSource] = useState("notes");
-  const [selectedBook, setSelectedBook] = useState("");
-  const [sharedBooks, setSharedBooks] = useState([]);
+  const [selectedBooks, setSelectedBooks] = useState([]);
   const [text, setText] = useState("");
   const [result, setResult] = useState("");
   const [sources, setSources] = useState([]);
+  const [sourceDetails, setSourceDetails] = useState(null);
   const [bookName, setBookName] = useState("");
+  const [language, setLanguage] = useState("auto");
+  const [webResearch, setWebResearch] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const ownIndexedBooks = materials.filter((material) =>
-    material.isIndexed &&
-    (material.type?.toLowerCase() === "pdf" || material.name?.toLowerCase().endsWith(".pdf"))
-  );
-  const indexedBooks = [...new Map([...ownIndexedBooks, ...sharedBooks]
-    .map((book) => [book.path, book])).values()];
+  const selectedPaths = selectedBooks;
 
   useEffect(() => {
-    let active = true;
-    async function loadSharedBooks() {
-      if (!supabase) return;
-      try {
-        const { data, error } = await supabase.from("study_materials")
-          .select("name, subject, type, storage_path, is_indexed, is_shared")
-          .eq("is_shared", true)
-          .eq("is_indexed", true)
-          .order("created_at", { ascending: false });
-        if (error) throw error;
-        if (!active) return;
-        setSharedBooks((data || []).map((book) => ({
-          id: book.storage_path,
-          path: book.storage_path,
-          name: book.name,
-          subject: book.subject || "",
-          type: book.type || "PDF",
-          isIndexed: Boolean(book.is_indexed),
-          isShared: true,
-        })));
-      } catch (error) {
-        if (import.meta.env.DEV) console.warn("Could not load shared study PDFs:", error);
-        if (active) setSharedBooks([]);
-      }
-    }
-    loadSharedBooks();
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    const nextBook = indexedBooks.some((book) => book.path === selectedBook)
-      ? selectedBook
-      : indexedBooks[0]?.path || "";
-    if (selectedBook !== nextBook) setSelectedBook(nextBook);
-  }, [indexedBooks, selectedBook]);
+    const available = new Set(getIndexedPdfDocuments(materials).map((document) => document.path));
+    setSelectedBooks((current) => current.filter((path) => available.has(path)));
+  }, [materials]);
 
   function clearAnswer() {
     setError("");
     setResult("");
     setSources([]);
+    setSourceDetails(null);
     setBookName("");
   }
 
   async function generate() {
     const prompt = text.trim();
     if (prompt.length < 5) {
-      const message = source === "pdf"
-        ? "Enter a question or request about the PDF."
-        : "Please paste your notes or topic first.";
+      const message = "Enter a question, notes, or topic first.";
       setError(message);
       notify(message);
       return;
     }
-    if (source === "notes" && prompt.length > 30000) {
+    if (!selectedPaths.length && prompt.length > 30000) {
       setError("Notes must be 30,000 characters or fewer.");
       return;
     }
-    if (source === "pdf" && prompt.length > 5000) {
-      setError("Questions must be 5,000 characters or fewer.");
-      return;
-    }
-    if (source === "pdf" && !selectedBook) {
-      setError("Choose an indexed PDF first.");
+    if (selectedPaths.length && prompt.length > 5000) {
+      setError("Questions must be 5,000 characters or fewer when using PDFs.");
       return;
     }
 
@@ -107,7 +70,7 @@ export default function AIStudyTools({ materials = [], notify = () => {}, onOpen
     clearAnswer();
 
     try {
-      const endpoint = source === "pdf" ? "/api/ask-book" : "/api/ai";
+      const endpoint = selectedPaths.length ? "/api/ask-book" : "/api/ai";
       const headers = { "Content-Type": "application/json" };
       if (!supabase) throw new Error("Supabase is not configured.");
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -119,10 +82,13 @@ export default function AIStudyTools({ materials = [], notify = () => {}, onOpen
       const response = await fetch(endpoint, {
         method: "POST",
         headers,
-        body: JSON.stringify({
+        body: serializeAIRequest({
           mode,
           text: prompt,
-          ...(source === "pdf" ? { storage_path: selectedBook } : {}),
+          pageContext,
+          storagePaths: selectedPaths,
+          language,
+          webResearch,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -133,6 +99,7 @@ export default function AIStudyTools({ materials = [], notify = () => {}, onOpen
 
       setResult(data.result);
       setSources(Array.isArray(data.sources) ? data.sources : []);
+      setSourceDetails(data.source_details && typeof data.source_details === "object" ? data.source_details : null);
       setBookName(data.book_name || "");
     } catch (err) {
       const message = err.message === "Failed to fetch"
@@ -159,30 +126,10 @@ export default function AIStudyTools({ materials = [], notify = () => {}, onOpen
       <div className={styles.heading}>
         <div>
           <h2>AI Study Tools</h2>
-          <p>Turn your notes or uploaded PDFs into useful revision material.</p>
+          <p>Use general knowledge, your notes, or selected indexed PDFs as study context.</p>
+          <small className={styles.pageContext}>Current page context · {pageContext?.label || "unavailable"}</small>
         </div>
         <Sparkles size={24} />
-      </div>
-
-      <div className={styles.sourceModes} role="group" aria-label="Choose study source">
-        <button
-          type="button"
-          className={source === "notes" ? styles.sourceActive : ""}
-          aria-pressed={source === "notes"}
-          onClick={() => { setSource("notes"); setText(""); clearAnswer(); }}
-          disabled={busy}
-        >
-          Paste notes
-        </button>
-        <button
-          type="button"
-          className={source === "pdf" ? styles.sourceActive : ""}
-          aria-pressed={source === "pdf"}
-          onClick={() => { setSource("pdf"); setMode("explain"); setText(""); clearAnswer(); }}
-          disabled={busy}
-        >
-          <FileText size={16} /> Ask my PDF
-        </button>
       </div>
 
       <div className={styles.modes}>
@@ -203,51 +150,42 @@ export default function AIStudyTools({ materials = [], notify = () => {}, onOpen
       </div>
 
       <div className={styles.inputPanel}>
-        {source === "pdf" && (
-          <div className={styles.bookPicker}>
-            <label htmlFor="study-book">Choose an indexed PDF</label>
-            {indexedBooks.length ? (
-              <select
-                id="study-book"
-                value={selectedBook}
-                onChange={(event) => { setSelectedBook(event.target.value); clearAnswer(); }}
-                disabled={busy}
-              >
-                {indexedBooks.map((book) => (
-                  <option key={book.path} value={book.path}>
-                    {book.name} · {book.isShared ? "Shared text" : book.subject || "My library"}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div className={styles.bookNotice}>
-                <p>No indexed PDFs are ready yet. Upload a text-based PDF in Study Materials first.</p>
-                <button type="button" onClick={onOpenMaterials}>Open Study Materials</button>
-              </div>
-            )}
-          </div>
-        )}
+        <IndexedDocumentPicker materials={materials} selectedPaths={selectedBooks} onChange={(paths) => { setSelectedBooks(paths); clearAnswer(); }} disabled={busy} onOpenMaterials={onOpenMaterials} />
+
+        <div className={styles.researchControls}>
+          <label htmlFor="study-response-language">Response language</label>
+          <select id="study-response-language" value={language} onChange={(event) => setLanguage(event.target.value)} disabled={busy}>
+            <option value="auto">Auto Detect</option>
+            <option value="english">English</option>
+            <option value="hindi">Hindi</option>
+            <option value="hinglish">Hinglish</option>
+          </select>
+          <label className={styles.researchToggle}>
+            <input type="checkbox" checked={webResearch} onChange={(event) => setWebResearch(event.target.checked)} disabled={busy} />
+            <span><strong>Research open textbooks and the internet</strong><small>Gemini free-tier search; no paid fallback.</small></span>
+          </label>
+        </div>
 
         <label htmlFor="study-notes">
-          {source === "pdf" ? "Your question or request" : "Your notes or topic"}
+          {selectedPaths.length ? "Your question or request" : "Your question, notes, or topic"}
         </label>
         <textarea
           id="study-notes"
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder={source === "pdf"
-            ? "Ask a question about the selected PDF..."
-            : "Paste your syllabus, class notes, or a topic here..."}
-          maxLength={source === "pdf" ? 5000 : 30000}
+          placeholder={selectedPaths.length
+            ? "Ask a question about the selected documents..."
+            : "Ask a general question or paste your notes / topic..."}
+          maxLength={selectedPaths.length ? 5000 : 30000}
           rows={9}
           disabled={busy}
         />
         <div className={styles.inputFooter}>
-          <small>{text.length.toLocaleString()} / {source === "pdf" ? "5,000" : "30,000"} characters</small>
+          <small>{text.length.toLocaleString()} / {selectedPaths.length ? "5,000" : "30,000"} characters</small>
           <button
             type="button"
             onClick={generate}
-            disabled={busy || !text.trim() || (source === "pdf" && !selectedBook)}
+            disabled={busy || !text.trim()}
             className={styles.generateButton}
           >
             {busy ? (
@@ -255,7 +193,7 @@ export default function AIStudyTools({ materials = [], notify = () => {}, onOpen
             ) : (
               <>
                 <Sparkles size={18} />
-                {source === "pdf" ? "Ask PDF" : `Generate ${mode === "quiz" ? "Quiz" : mode === "explain" ? "Explanation" : "Summary"}`}
+                {selectedPaths.length ? "Use selected PDFs" : `Generate ${mode === "quiz" ? "Quiz" : mode === "explain" ? "Explanation" : "Summary"}`}
               </>
             )}
           </button>
@@ -280,10 +218,28 @@ export default function AIStudyTools({ materials = [], notify = () => {}, onOpen
               <Copy size={16} /> Copy
             </button>
           </div>
-          <pre className={styles.resultText}>{result}</pre>
-          {source === "pdf" && sources.length > 0 && (
+          <Suspense fallback={<p className={styles.rendering}>Formatting answer…</p>}>
+            <AIResponseMarkdown content={result} className={styles.resultText} />
+          </Suspense>
+          {sourceDetails && Object.values(sourceDetails).some((items) => Array.isArray(items) && items.length > 0) ? (
+            <section className={styles.sourceCategories} aria-label="Sources used">
+              <strong>Source usage</strong>
+              {[
+                ["uploaded_pdf", "Uploaded PDF"],
+                ["reference_books", "Reference Books and Open Educational Resources"],
+                ["internet", "Internet Sources"],
+              ].map(([key, label]) => sourceDetails[key]?.length > 0 && <div className={styles.sourceGroup} key={key}>
+                <h4>{label}</h4>
+                <ul>{sourceDetails[key].map((source, index) => <li key={`${source.title}-${source.reference || source.url || index}`}>
+                  {source.url
+                    ? <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>
+                    : <span>{source.title}{source.reference ? ` · ${source.reference}` : ""}</span>}
+                </li>)}</ul>
+              </div>)}
+            </section>
+          ) : sources.length > 0 && (
             <small className={styles.sourceNote}>
-              Based on {bookName || "your PDF"} · pages {sources.join(", ")}
+              Based on {bookName || "selected PDFs"} · {sources.join(" · ")}
             </small>
           )}
           <small className={styles.liveNote}>Generated by the AI service.</small>

@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, ClipboardList } from "lucide-react";
 import { supabase } from "../../lib/supabase.js";
 import styles from "./AcademicAssignments.module.css";
 
-export default function AcademicAssignments({ courses = [] }) {
+export default function AcademicAssignments({ courses = [], onPageContextChange }) {
   const [rows, setRows] = useState([]);
   const [state, setState] = useState("loading");
   useEffect(() => {
@@ -24,6 +24,13 @@ export default function AcademicAssignments({ courses = [] }) {
     return () => { active = false; };
   }, [courses]);
   const names = new Map(courses.map((course) => [course.id, course.name]));
+  const pageSummary = useMemo(() => [
+    `Authorized assignments visible for the current course allocation: ${rows.length}.`,
+    ...rows.slice(0, 20).map((row) => `- ${row.title}; ${names.get(row.course_id) || "Course"}${row.due_at ? `; due ${new Date(row.due_at).toLocaleDateString()}` : "; no due date"}`),
+    state === "loading" ? "Assignment data is still loading." : "",
+    state === "error" ? "Assignment data could not be loaded; no missing assignment details are inferred." : "",
+  ].filter(Boolean).join("\n").slice(0, 3500), [rows, names, state]);
+  useEffect(() => { onPageContextChange?.({ page: "Assignments", summary: pageSummary }); }, [onPageContextChange, pageSummary]);
   return <section className={styles.panel} aria-labelledby="academic-assignments-heading">
     <div className={styles.heading}><span><ClipboardList size={18}/></span><div><h2 id="academic-assignments-heading">Academic assignments</h2><p>Assignments for your selected branch and courses.</p></div></div>
     {state === "loading" ? <p className={styles.status}>Loading assignments…</p> : state === "error" ? <p className={styles.status}>Assignments are currently unavailable.</p> : rows.length ? <ul>{rows.map((row) => <li key={row.id}><div><strong>{row.title}</strong><span>{names.get(row.course_id) || "Course"}</span>{row.description && <p>{row.description}</p>}</div>{row.due_at && <time dateTime={row.due_at}><CalendarDays size={14}/>{new Date(row.due_at).toLocaleDateString()}</time>}</li>)}</ul> : <p className={styles.status}>No academic assignments for your selected courses yet.</p>}

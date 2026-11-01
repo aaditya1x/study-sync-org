@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpenCheck, ExternalLink, FileText, GraduationCap, Search } from "lucide-react";
+import { BookOpenCheck, CheckCircle2, ExternalLink, FileText, GraduationCap, Search, UploadCloud } from "lucide-react";
 import { supabase } from "../../lib/supabase.js";
 import styles from "./SyllabusLibrary.module.css";
 
@@ -22,7 +22,7 @@ function rankUnit(unit, index) {
   return found ? Number(found[1]) || roman[found[1].toLowerCase()] || index + 1 : index + 1;
 }
 
-export default function SyllabusLibrary({ query = "", courses = [], materials = [], loading = false, coursesStatus = "", materialsStatus = "" }) {
+export default function SyllabusLibrary({ query = "", courses = [], materials = [], loading = false, coursesStatus = "", materialsStatus = "", onPageContextChange, platformRole }) {
   const [catalog, setCatalog] = useState({});
   const [completed, setCompleted] = useState(new Set());
   const [loadingTopics, setLoadingTopics] = useState(false);
@@ -31,6 +31,50 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
   const [subjectFilter, setSubjectFilter] = useState("all");
   const [unitFilter, setUnitFilter] = useState("all");
   const [savingTopic, setSavingTopic] = useState("");
+  const [importCourseId, setImportCourseId] = useState("");
+  const [importFile, setImportFile] = useState(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [importSources, setImportSources] = useState([]);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [openingSource, setOpeningSource] = useState("");
+  const isSuperAdmin = platformRole === "super_admin";
+
+  const subjectList = useMemo(() => {
+    const list = [...SUBJECTS];
+    for (const course of courses) {
+      const code = String(course.code || course.course_code || course.id);
+      if (!list.some((subject) => subject.code.toUpperCase() === code.toUpperCase() || subject.code.toUpperCase() === String(course.code || course.course_code || "").toUpperCase())) {
+        list.push({ code, name: course.name || course.title || "Untitled subject", courseId: course.id });
+      }
+    }
+    return list;
+  }, [courses]);
+  const subjectCourse = (subject) => courses.find((course) => (subject.courseId && course.id === subject.courseId)
+    || String(course.code || course.course_code || "").toUpperCase() === subject.code.toUpperCase());
+
+  async function syllabusRequest(body) {
+    const { data, error: authError } = await supabase.auth.getSession();
+    if (authError || !data.session?.access_token) throw new Error("Sign in again to manage syllabus imports.");
+    const response = await fetch("/api/syllabus-import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Syllabus request failed (${response.status}).`);
+    return result;
+  }
+
+  async function refreshSyllabusSources(courseId = "") {
+    if (!isSuperAdmin || !supabase) return;
+    try {
+      const result = await syllabusRequest({ action: "list", ...(courseId ? { course_id: courseId } : {}) });
+      setImportSources(result.sources || []);
+    } catch (failure) { setImportError(failure.message || "Could not load syllabus review items."); }
+  }
+
+  useEffect(() => { refreshSyllabusSources(); }, [isSuperAdmin, courses]);
 
   useEffect(() => setSearch(query), [query]);
   useEffect(() => {
@@ -38,7 +82,7 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
     async function load() {
       setLoadingTopics(true); setError("");
       if (!supabase) { setError("Connect the academic database to browse the verified syllabus catalog."); setCatalog({}); setLoadingTopics(false); return; }
-      const courseIds = SUBJECTS.map((subject) => courses.find((course) => String(course.code || course.course_code || "").toUpperCase() === subject.code)?.id).filter(Boolean);
+      const courseIds = subjectList.map((subject) => subjectCourse(subject)?.id).filter(Boolean);
       if (!courseIds.length) { setCatalog({}); setLoadingTopics(false); return; }
       try {
         const { data: units, error: unitError } = await supabase.from("academic_units").select("id, course_id, title, position").in("course_id", courseIds).is("archived_at", null).order("position");
@@ -50,7 +94,7 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
         if (chapterError) throw chapterError;
         const chapterIds = (chapters || []).map((chapter) => chapter.id);
         const { data: topics, error: topicError } = chapterIds.length
-          ? await supabase.from("academic_topics").select("id, chapter_id, title, position").in("chapter_id", chapterIds).is("archived_at", null).order("position")
+          ? await supabase.from("academic_topics").select("id, chapter_id, parent_topic_id, title, position").in("chapter_id", chapterIds).is("archived_at", null).order("position")
           : { data: [], error: null };
         if (topicError) throw topicError;
         const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -60,12 +104,13 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
           : { data: [], error: null };
         if (progressError) throw progressError;
         if (!active) return;
-        setCatalog(Object.fromEntries(SUBJECTS.map((subject) => {
-          const course = courses.find((item) => String(item.code || item.course_code || "").toUpperCase() === subject.code);
+        setCatalog(Object.fromEntries(subjectList.map((subject) => {
+          const course = subjectCourse(subject);
           const subjectUnits = (units || []).filter((unit) => unit.course_id === course?.id).sort((a, b) => a.position - b.position);
           return [subject.code, { course, units: subjectUnits.map((unit, index) => ({
             ...unit, number: rankUnit(unit, index), chapters: (chapters || []).filter((chapter) => chapter.unit_id === unit.id).map((chapter) => ({
-              ...chapter, topics: (topics || []).filter((topic) => topic.chapter_id === chapter.id),
+              ...chapter, topics: (topics || []).filter((topic) => topic.chapter_id === chapter.id && !topic.parent_topic_id)
+                .map((topic) => ({ ...topic, subtopics: (topics || []).filter((child) => child.parent_topic_id === topic.id) })),
             })),
           })) }];
         })));
@@ -75,14 +120,66 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
     }
     load();
     return () => { active = false; };
-  }, [courses]);
+  }, [courses, subjectList, refreshVersion]);
+
+  useEffect(() => {
+    if (!importCourseId && courses.length) setImportCourseId(courses[0].id);
+  }, [courses, importCourseId]);
+
+  async function importSyllabus(event) {
+    event.preventDefault(); setImportError("");
+    const form = event.currentTarget;
+    if (!isSuperAdmin || !supabase) return;
+    if (!importCourseId || !importFile) { setImportError("Choose a subject and syllabus PDF."); return; }
+    if (importFile.size < 1 || importFile.size > 25 * 1024 * 1024 || (importFile.type && importFile.type !== "application/pdf") || !importFile.name.toLowerCase().endsWith(".pdf")) {
+      setImportError("Select a valid PDF file up to 25 MB."); return;
+    }
+    setImportBusy(true);
+    let storagePath = "";
+    try {
+      const { data: auth, error: authError } = await supabase.auth.getUser();
+      if (authError || !auth.user) throw new Error("Sign in again before uploading a syllabus.");
+      storagePath = `syllabus/${auth.user.id}/${importCourseId}/${crypto.randomUUID()}.pdf`;
+      const { error: uploadError } = await supabase.storage.from("academic-syllabi").upload(storagePath, importFile, { contentType: "application/pdf", upsert: false });
+      if (uploadError) throw uploadError;
+      const result = await syllabusRequest({ action: "process", course_id: importCourseId, storage_path: storagePath, filename: importFile.name, file_size: importFile.size });
+      setImportSources((current) => [result.source, ...current.filter((source) => source.id !== result.source.id)]);
+      setImportFile(null);
+      form.reset();
+    } catch (failure) {
+      setImportError(failure.message || "The syllabus could not be processed. An uploaded original remains in private Storage if upload completed.");
+      await refreshSyllabusSources(importCourseId);
+    } finally { setImportBusy(false); }
+  }
+
+  async function publishSyllabus(sourceId) {
+    setImportBusy(true); setImportError("");
+    try {
+      await syllabusRequest({ action: "publish", source_id: sourceId });
+      await refreshSyllabusSources(importCourseId);
+      setRefreshVersion((value) => value + 1);
+    } catch (failure) { setImportError(failure.message || "The reviewed syllabus could not be published."); }
+    finally { setImportBusy(false); }
+  }
+
+  async function openSyllabusSource(source) {
+    if (!supabase) return;
+    setOpeningSource(source.id); setImportError("");
+    try {
+      const { data, error: signError } = await supabase.storage.from("academic-syllabi").createSignedUrl(source.storage_path, 300);
+      if (signError) throw signError;
+      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    } catch (failure) { setImportError(failure.message || "Could not open the private source PDF."); }
+    finally { setOpeningSource(""); }
+  }
 
   const visibleSubjects = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return SUBJECTS.filter((subject) => subjectFilter === "all" || subjectFilter === subject.code)
+    return subjectList.filter((subject) => subjectFilter === "all" || subjectFilter === subject.code)
       .map((subject) => {
         const value = catalog[subject.code] || { units: [] };
-        const units = [1, 2, 3, 4].map((number) => {
+        const unitNumbers = [...new Set([1, 2, 3, 4, ...(value.units || []).map((unit) => unit.number)])].sort((a, b) => a - b);
+        const units = unitNumbers.map((number) => {
           const actual = value.units.find((unit) => unit.number === number) || value.units[number - 1];
           return { number, actual };
         }).filter(({ number, actual }) => unitFilter === "all" || Number(unitFilter) === number)
@@ -92,11 +189,43 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
           .filter((unit) => !term || unit.chapters.length || `${subject.name} ${subject.code} Unit ${unit.number}`.toLowerCase().includes(term));
         return { ...subject, ...value, units };
       }).filter((subject) => !term || `${subject.name} ${subject.code}`.toLowerCase().includes(term) || subject.units.some((unit) => unit.chapters.length));
-  }, [catalog, search, subjectFilter, unitFilter]);
-  const otherCourses = courses.filter((course) => !SUBJECTS.some((subject) => subject.code === String(course.code || course.course_code || "").toUpperCase()));
+  }, [catalog, search, subjectFilter, unitFilter, subjectList]);
+  const otherCourses = courses.filter((course) => !subjectList.some((subject) => subjectCourse(subject)?.id === course.id));
   const unassignedShared = materials.filter((item) => item.isShared === true || item.is_shared === true)
     .filter((item) => !item.courseId && !item.course_id)
     .filter((item) => !search.trim() || `${item.name || ""} ${item.subject || ""}`.toLowerCase().includes(search.trim().toLowerCase()));
+
+  const pageContextSummary = useMemo(() => {
+    const lines = [`Visible curriculum filters: ${search.trim() || "no text search"}; subject ${subjectFilter}; unit ${unitFilter}.`];
+    let remaining = 60;
+    for (const subject of visibleSubjects) {
+      lines.push(`${subject.name} (${subject.code})`);
+      for (const unit of subject.units) {
+        for (const chapter of unit.chapters) {
+          for (const topic of chapter.topics) {
+            if (remaining <= 0) break;
+            lines.push(`- Unit ${unit.number}, ${chapter.title}: ${topic.title} (${completed.has(topic.id) ? "complete" : "incomplete"})`);
+            for (const child of topic.subtopics || []) {
+              if (remaining <= 0) break;
+              lines.push(`  - Subtopic: ${child.title} (${completed.has(child.id) ? "complete" : "incomplete"})`);
+              remaining -= 1;
+            }
+            remaining -= 1;
+          }
+          if (remaining <= 0) break;
+        }
+        if (remaining <= 0) break;
+      }
+      if (remaining <= 0) break;
+    }
+    if (loadingTopics) lines.push("Curriculum is still loading; no topics beyond the currently available rows are assumed.");
+    if (error) lines.push("The curriculum page reports a loading/access error; unavailable content is not inferred.");
+    return lines.join("\n").slice(0, 7000);
+  }, [visibleSubjects, completed, search, subjectFilter, unitFilter, loadingTopics, error]);
+
+  useEffect(() => {
+    onPageContextChange?.({ page: "Syllabus", summary: pageContextSummary });
+  }, [onPageContextChange, pageContextSummary]);
 
   async function toggleTopic(topicId, checked) {
     if (!supabase) return;
@@ -119,12 +248,30 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
 
   return <section className={styles.page}>
     <header className={styles.heading}><div className={styles.icon}><GraduationCap size={24}/></div><div><p className={styles.eyebrow}>DEGREE: B.TECH · BRANCH: COMPUTER SCIENCE & ENGINEERING</p><h1>Syllabus Browser</h1><p>Session 2026–27 · Semester III · Units 1–4</p></div></header>
-    <div className={styles.notice}>The uploaded syllabus PDF was not present in the project files. This browser shows the requested subject list and only displays unit topics that have been entered in the verified academic curriculum. No syllabus topics have been invented.</div>
-    <div className={styles.filters}><label><Search size={16}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subjects and topics" aria-label="Search syllabus topics"/></label><select value={subjectFilter} onChange={(event) => setSubjectFilter(event.target.value)} aria-label="Filter by subject"><option value="all">All subjects</option>{SUBJECTS.map((subject) => <option key={subject.code} value={subject.code}>{subject.code} · {subject.name}</option>)}</select><select value={unitFilter} onChange={(event) => setUnitFilter(event.target.value)} aria-label="Filter by unit"><option value="all">All units</option>{[1,2,3,4].map((unit) => <option key={unit} value={unit}>Unit {unit}</option>)}</select></div>
+    {isSuperAdmin ? <section className={styles.importPanel}>
+      <div><h2><UploadCloud size={17}/> Import syllabus PDF</h2><p>Upload a text-based PDF for a subject. Extracted entries remain pending until you review and publish them.</p></div>
+      <form onSubmit={importSyllabus}>
+        <label>Subject<select value={importCourseId} onChange={(event) => setImportCourseId(event.target.value)} required><option value="">Select subject</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name || course.title || "Untitled subject"}{course.code || course.course_code ? ` · ${course.code || course.course_code}` : ""}</option>)}</select></label>
+        <label>Source PDF<input type="file" accept="application/pdf,.pdf" onChange={(event) => setImportFile(event.target.files?.[0] || null)} required/></label>
+        <button type="submit" disabled={importBusy || !importFile || !importCourseId}>{importBusy ? "Processing…" : "Upload and extract"}</button>
+      </form>
+      {importError && <p className={styles.importError} role="alert">{importError}</p>}
+      {importSources.filter((source) => source.status !== "verified").map((source) => <article className={styles.pendingImport} key={source.id}>
+        <div><strong>{source.original_filename}</strong><span>{courses.find((course) => course.id === source.course_id)?.name || "Subject"} · {source.status === "pending_review" ? "Pending Super Admin verification" : "Processing failed; source retained"}</span></div>
+        <button type="button" onClick={() => openSyllabusSource(source)} disabled={openingSource === source.id}>{openingSource === source.id ? "Opening…" : "Open source PDF"}</button>
+        {source.processing_error && <p className={styles.importError}>{source.processing_error}</p>}
+        {source.status === "pending_review" && <>
+          {!source.extracted_outline?.subject_found_in_pdf && <p className={styles.importError}>The PDF text did not clearly contain the selected subject name. Confirm this source before publishing.</p>}
+          <ul>{(source.extracted_outline?.units || []).map((unit) => <li key={`${source.id}-${unit.number}`}><strong>Unit {unit.number}: {unit.title}</strong><ul>{unit.topics.map((topic, index) => <li key={`${unit.number}-${index}`}>{topic.title}{topic.subtopics?.length ? ` · ${topic.subtopics.join("; ")}` : ""}</li>)}</ul></li>)}</ul>
+          <button type="button" onClick={() => publishSyllabus(source.id)} disabled={importBusy}><CheckCircle2 size={15}/> Verify and publish</button>
+        </>}
+      </article>)}
+    </section> : <div className={styles.notice}>Curriculum topics are imported from source PDFs and displayed after an authorized Super Admin verifies the extracted outline. No syllabus topics are generated or invented.</div>}
+    <div className={styles.filters}><label><Search size={16}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subjects and topics" aria-label="Search syllabus topics"/></label><select value={subjectFilter} onChange={(event) => setSubjectFilter(event.target.value)} aria-label="Filter by subject"><option value="all">All subjects</option>{subjectList.map((subject) => <option key={subject.code} value={subject.code}>{subject.code} · {subject.name}</option>)}</select><select value={unitFilter} onChange={(event) => setUnitFilter(event.target.value)} aria-label="Filter by unit"><option value="all">All units</option>{[...new Set([...visibleSubjects.flatMap((subject) => subject.units.map((unit) => unit.number)), 1, 2, 3, 4])].sort((a,b)=>a-b).map((unit) => <option key={unit} value={unit}>Unit {unit}</option>)}</select></div>
     {(error || coursesStatus === "error" || materialsStatus === "error") && <p className={styles.loadError} role="alert">{error || "Some subject or study material data could not be loaded."}</p>}
     {loadingTopics && <p className={styles.loading} role="status">Loading verified units and topics…</p>}
     <div className={styles.subjectList}>{visibleSubjects.map((subject) => {
-      const allTopics = (catalog[subject.code]?.units || []).flatMap((unit) => unit.chapters.flatMap((chapter) => chapter.topics));
+      const allTopics = (catalog[subject.code]?.units || []).flatMap((unit) => unit.chapters.flatMap((chapter) => chapter.topics.flatMap((topic) => [topic, ...topic.subtopics])));
       const done = allTopics.filter((topic) => completed.has(topic.id)).length;
       const subjectMaterials = materials.filter((item) => String(item.courseId || item.course_id || "") === String(subject.course?.id || ""));
       return <article className={styles.subject} key={subject.code}>
@@ -136,7 +283,7 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
           if (search && !topics.length && !`${subject.name} ${subject.code} Unit ${unit.number}`.toLowerCase().includes(search.toLowerCase())) return null;
           return <details key={unit.number} className={styles.unit}>
             <summary><span>Unit {unit.number}{unit.actual?.title ? ` · ${unit.actual.title}` : ""}</span><small>{unit.actual ? `${topics.length} topics` : "No verified topic details available"}</small></summary>
-            {unit.actual ? unit.chapters.length ? unit.chapters.map((chapter) => <div className={styles.chapter} key={chapter.id}><h3>{chapter.title}</h3>{chapter.topics.length ? chapter.topics.map((topic) => <label key={topic.id} className={styles.topic}><input type="checkbox" checked={completed.has(topic.id)} disabled={savingTopic === topic.id} onChange={(event) => toggleTopic(topic.id, event.target.checked)}/><span>{topic.title}</span></label>) : <p className={styles.empty}>No topics have been entered under this heading.</p>}</div>) : <p className={styles.empty}>The verified unit has no topic entries yet.</p> : <p className={styles.empty}>Topic details will appear after the source syllabus has been reviewed and entered.</p>}
+            {unit.actual ? unit.chapters.length ? unit.chapters.map((chapter) => <div className={styles.chapter} key={chapter.id}><h3>{chapter.title}</h3>{chapter.topics.length ? chapter.topics.map((topic) => <div key={topic.id}><label className={styles.topic}><input type="checkbox" checked={completed.has(topic.id)} disabled={savingTopic === topic.id} onChange={(event) => toggleTopic(topic.id, event.target.checked)}/><span>{topic.title}</span></label>{topic.subtopics.map((subtopic) => <label key={subtopic.id} className={`${styles.topic} ${styles.subtopic}`}><input type="checkbox" checked={completed.has(subtopic.id)} disabled={savingTopic === subtopic.id} onChange={(event) => toggleTopic(subtopic.id, event.target.checked)}/><span>{subtopic.title}</span></label>)}</div>) : <p className={styles.empty}>No topics have been entered under this heading.</p>}</div>) : <p className={styles.empty}>The verified unit has no topic entries yet.</p> : <p className={styles.empty}>Topic details will appear after the source syllabus has been reviewed and entered.</p>}
             {subjectMaterials.length > 0 && <div className={styles.materialLinks}><h3><FileText size={14}/> Related shared study materials</h3>{subjectMaterials.map((material) => material.url ? <a href={material.url} key={material.id || material.path} target="_blank" rel="noreferrer">{material.name}<ExternalLink size={13}/></a> : <span key={material.id || material.path}>{material.name}</span>)}</div>}
           </details>;
         })}</div>

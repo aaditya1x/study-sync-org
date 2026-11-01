@@ -1,0 +1,45 @@
+.markdown {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p { margin: .65em 0; white-space: pre-wrap; }
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 { margin: 1.05em 0 .45em; color: inherit; line-height: 1.3; }
+.markdown h1 { font-size: 1.45em; }
+.markdown h2 { font-size: 1.3em; }
+.markdown h3 { font-size: 1.16em; }
+.markdown h4,
+.markdown h5,
+.markdown h6 { font-size: 1.05em; }
+.markdown ul,
+.markdown ol { margin: .55em 0; padding-left: 1.55em; }
+.markdown li { padding-left: .12em; }
+.markdown li + li { margin-top: .25em; }
+.markdown li > p { margin: .25em 0; }
+.markdown blockquote { margin: .8em 0; padding: .15em .85em; border-left: 3px solid var(--primary); color: var(--muted); }
+.markdown hr { margin: 1em 0; border: 0; border-top: 1px solid var(--line); }
+.markdown a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.code { padding: .12em .35em; border-radius: 5px; background: var(--surface-soft); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .9em; overflow-wrap: anywhere; }
+.pre { max-width: 100%; margin: .75em 0; padding: 12px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); white-space: pre; tab-size: 2; }
+.pre .code { padding: 0; border: 0; background: transparent; font-size: .92em; overflow-wrap: normal; }
+.markdown :global(.katex-display) { max-width: 100%; margin: .75em 0; overflow-x: auto; overflow-y: hidden; padding: .3em 0; }
+.tableWrap { max-width: 100%; margin: .75em 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; }
+.markdown table { width: 100%; border-collapse: collapse; font-size: .94em; }
+.markdown th,
+.markdown td { min-width: 80px; padding: 7px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.markdown th { background: var(--surface-soft); font-weight: 750; }
+
+@media (max-width: 560px) {
+  .pre { padding: 9px; font-size: .9em; }
+  .markdown th,
+  .markdown td { min-width: 70px; padding: 6px 8px; }
+}

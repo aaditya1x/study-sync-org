@@ -1,0 +1,14 @@
+.figure { display: grid; justify-items: start; gap: 8px; min-width: 0; margin: .8em 0; }
+.diagram { display: block; max-width: 100%; max-height: 520px; object-fit: contain; object-position: left center; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+.status { margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); background: var(--surface-soft); font-size: .9em; }
+.expand,.close { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--primary); background: var(--surface); font: inherit; font-size: .85em; cursor: pointer; }
+.overlay { position: fixed; z-index: 200; inset: 0; display: grid; place-items: center; padding: 18px; background: rgb(0 0 0 / 72%); }
+.expandedPanel { position: relative; display: grid; place-items: center; width: min(1200px, 100%); height: min(90dvh, 900px); padding: 48px 18px 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.close { position: absolute; top: 10px; right: 10px; width: 38px; height: 38px; padding: 0; }
+.expandedDiagram { display: block; max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; }
+
+@media (max-width: 560px) {
+  .diagram { max-height: 360px; padding: 8px; }
+  .overlay { padding: 8px; }
+  .expandedPanel { height: calc(100dvh - 16px); padding: 48px 8px 8px; }
+}

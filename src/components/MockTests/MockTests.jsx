@@ -6,11 +6,13 @@ import styles from "./MockTests.module.css";
 
 function prettyTime(seconds) { return `${Math.floor(seconds / 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`; }
 
-export default function MockTests({ role }) {
+export default function MockTests({ role, courses = [], onPageContextChange }) {
   const [tests, setTests] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [testsLoaded, setTestsLoaded] = useState(false);
   const [error, setError] = useState("");
+  const [historyError, setHistoryError] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [count, setCount] = useState(10);
   const [duration, setDuration] = useState(20);
@@ -29,11 +31,14 @@ export default function MockTests({ role }) {
   const pendingAnswerSave = useRef(Promise.resolve());
 
   const refresh = useCallback(async () => {
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setHistoryError(""); setTestsLoaded(false);
     try {
-      const [available, previous] = await Promise.all([learningRequest("list-tests"), learningRequest("history")]);
-      setTests(available || []); setHistory(previous || []);
-      setSelectedId((old) => old || available?.[0]?.id || "");
+      const available = await learningRequest("list-tests");
+      setTests(available || []);
+      setSelectedId((old) => available?.some((test) => test.id === old) ? old : available?.[0]?.id || "");
+      setTestsLoaded(true);
+      try { setHistory((await learningRequest("history")) || []); }
+      catch (failure) { setHistory([]); setHistoryError(failure.message || "Previous results could not be loaded."); }
       setResultError("");
     } catch (failure) { setError(failure.message || "Mock tests could not be loaded."); }
     finally { setLoading(false); }
@@ -48,6 +53,15 @@ export default function MockTests({ role }) {
   }, [selected, difficulty]);
   const questions = attempt?.questions || [];
   const activeQuestion = questions[current];
+  const aiSummary = useMemo(() => [
+    `Published practice tests for this student allocation: ${tests.length}.`,
+    ...tests.slice(0, 15).map((test) => `- ${test.title}; ${test.courses?.name || test.courses?.title || test.courses?.code || "Subject"}; ${test.scope}; ${test.question_count} questions, ${test.marks_per_question || 1} mark(s) each, ${test.duration_minutes} minutes; ${test.available_questions} verified unique active questions available.`),
+    `This student's completed practice attempts: ${history.length}.`,
+    ...history.slice(0, 10).map((item) => `- ${item.title}: ${item.score}/${item.total} marks (${item.correct} correct, ${item.wrong} wrong, ${item.unanswered} unanswered).`),
+    loading ? "Mock Test data is still loading." : "",
+    error ? "The page reports a loading/access error; unavailable tests are not inferred." : "",
+  ].filter(Boolean).join("\n").slice(0, 3500), [tests, history, loading, error]);
+  useEffect(() => { if (role === "student") onPageContextChange?.({ page: "Mock Tests", summary: aiSummary }); }, [role, onPageContextChange, aiSummary]);
 
   const submit = useCallback(async (auto = false) => {
     if (!attempt || submitting.current || result) return;
@@ -111,8 +125,9 @@ export default function MockTests({ role }) {
   return <section className={styles.page}>
     <header><span><ClipboardCheck size={22}/></span><div><p>PRACTICE QUESTIONS · NOT OFFICIAL EXAM PAPERS</p><h1>Mock Tests</h1><small>Practice Questions are drawn from the reviewed bank and are never presented as official previous-year questions.</small></div></header>
     {error && <div className={styles.error} role="alert">{error}<button type="button" onClick={refresh}>Retry</button></div>}
+    {historyError && <div className={styles.error} role="status">{historyError}</div>}
     {resultError && <div className={styles.error} role="alert">{resultError}<button type="button" onClick={() => attempt && submit(true)}>Retry submission</button></div>}
-    {loading ? <p className={styles.status} role="status">Loading available practice tests…</p> : !attempt && !result && <>
+    {loading ? <p className={styles.status} role="status">Loading available practice tests…</p> : !attempt && !result && testsLoaded && <>
       <div className={styles.configure}>
         <div><p>PRACTICE QUESTIONS · MOCK TEST</p><h2>Choose a practice set</h2><small>Test length and duration are checked against the published bank before a test begins.</small></div>
         {tests.length ? <>
@@ -122,11 +137,11 @@ export default function MockTests({ role }) {
             <label>Duration<select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{[10,20,30,45,60].map((n) => <option key={n} value={n}>{n} minutes</option>)}</select></label>
             <label>Difficulty<select value={selected?.difficulty === "any" ? difficulty : selected?.difficulty || difficulty} disabled={selected?.difficulty !== "any"} onChange={(event) => setDifficulty(event.target.value)}>{["easy","medium","hard"].map((level) => <option key={level} value={level}>{level[0].toUpperCase()+level.slice(1)}</option>)}</select></label>
           </div>
-          <p className={styles.bankNote}>{selected?.scope === "full" ? "Full syllabus" : selected?.scope === "unit" ? "Unit-wise" : selected?.scope === "topic" ? "Topic-wise" : "Subject-wise"} · {matchingCount} verified active questions match this selection</p>
+          <p className={styles.bankNote}>{selected?.scope === "full" ? "Full syllabus" : selected?.scope === "unit" ? "Unit-wise" : selected?.scope === "topic" ? "Topic-wise" : "Subject-wise"} · {matchingCount} verified active questions match this selection · {selected?.marks_per_question || 1} mark(s) per question · up to {count * (selected?.marks_per_question || 1)} marks</p>
           <button className={styles.primary} type="button" onClick={() => begin()} disabled={busy || !selected || count > matchingCount}>{busy ? "Preparing…" : "Start practice test"}<ArrowRight size={16}/></button>
-        </> : <div className={styles.empty}><Circle size={19}/><div><strong>No practice tests are published yet.</strong><p>Question banks and test availability are managed by an authorized Super Admin. No sample or invented questions are shown here.</p></div></div>}
+        </> : <div className={styles.empty}><Circle size={19}/><div><strong>No practice tests are published for your current course allocation yet.</strong><p>An authorized Super Admin must add syllabus-verified Practice Questions, create a test configuration, and publish it. No sample or invented questions are shown here. Practice Questions are separate from official previous-year questions.</p></div></div>}
       </div>
-      {!!history.length && <section className={styles.history}><h2>Previous results</h2><div className={styles.historyList}>{history.map((item) => <article key={item.id}><div><strong>{item.title}</strong><small>{new Date(item.submitted_at).toLocaleString()} · {item.total} questions</small></div><b>{item.score}/{item.total}</b><button type="button" onClick={() => openHistory(item)}>Review result</button><button type="button" onClick={() => { const test = tests.find((entry) => entry.id === item.test_config_id); if (test) { setSelectedId(test.id); void begin(test); } else setError("This test is no longer published. Choose another practice set to retake."); }}>Retake</button></article>)}</div></section>}
+      {!!history.length && <section className={styles.history}><h2>Previous results</h2><div className={styles.historyList}>{history.map((item) => <article key={item.id}><div><strong>{item.title}</strong><small>{new Date(item.submitted_at).toLocaleString()} · {item.question_count} questions</small></div><b>{item.score}/{item.total} marks</b><button type="button" onClick={() => openHistory(item)}>Review result</button><button type="button" onClick={() => { const test = tests.find((entry) => entry.id === item.test_config_id); if (test) { setSelectedId(test.id); void begin(test); } else setError("This test is no longer published. Choose another practice set to retake."); }}>Retake</button></article>)}</div></section>}
     </>}
     {attempt && activeQuestion && !result && <div className={styles.exam}>
       <div className={styles.examTop}><div><small>PRACTICE QUESTIONS · {attempt.test.title}</small><h2>Question {current + 1} of {questions.length}</h2></div><div className={`${styles.timer} ${remaining < 60 ? styles.timerLow : ""}`} role="timer" aria-live="off"><AlarmClock size={17}/>{prettyTime(remaining)}</div></div>
@@ -136,6 +151,6 @@ export default function MockTests({ role }) {
       <div className={styles.examActions}><button type="button" onClick={() => setCurrent((value) => Math.max(0, value - 1))} disabled={current === 0}><ArrowLeft size={15}/>Previous</button><button type="button" onClick={() => setCurrent((value) => Math.min(questions.length - 1, value + 1))} disabled={current === questions.length - 1}>Next<ArrowRight size={15}/></button><button className={styles.submit} type="button" onClick={() => submit(false)} disabled={busy}>{busy ? "Submitting…" : "Submit test"}<Send size={15}/></button></div>
       <p className={`${styles.examHint} ${answerSaveError ? styles.saveError : ""}`}><CheckCircle2 size={14}/> {answerSaveError || `${Object.keys(answers).length} answered · ${questions.length - Object.keys(answers).length} unanswered${busy ? " · Saving final responses…" : " · Responses save as you go"}`}</p>
     </div>}
-    {result && <section className={styles.result}><div className={styles.score}><p>TEST RESULT · {result.title}</p><h2>{result.score} <small>/ {result.total}</small></h2><strong>{result.percentage}%</strong><div><span>Correct {result.correct}</span><span>Wrong {result.wrong}</span><span>Unattempted {result.unanswered}</span></div></div><h3>Answers and explanations</h3><div className={styles.reviewList}>{result.review.map((item, index) => <article key={item.id}><strong>{index + 1}. {item.prompt}</strong><p>Your answer: {item.picked === null ? "Not answered" : item.options[item.picked]}</p><p>Correct answer: {item.options[item.correct_index]}</p>{item.explanation && <small>Explanation: {item.explanation}</small>}</article>)}</div><button type="button" className={styles.primary} onClick={() => { setResult(null); setAnswers({}); setReview({}); setCurrent(0); setResultError(""); }}>Back to mock tests<ArrowLeft size={15}/></button></section>}
+    {result && <section className={styles.result}><div className={styles.score}><p>TEST RESULT · {result.title}</p><h2>{result.score} <small>/ {result.total} marks</small></h2><strong>{result.percentage}%</strong><div><span>Correct {result.correct}</span><span>Wrong {result.wrong}</span><span>Unattempted {result.unanswered}</span></div></div><h3>Answers and explanations</h3><div className={styles.reviewList}>{result.review.map((item, index) => <article key={item.id}><strong>{index + 1}. {item.prompt}</strong><p>Your answer: {item.picked === null ? "Not answered" : item.options[item.picked]}</p><p>Correct answer: {item.options[item.correct_index]}</p>{item.explanation && <small>Explanation: {item.explanation}</small>}</article>)}</div><button type="button" className={styles.primary} onClick={() => { setResult(null); setAnswers({}); setReview({}); setCurrent(0); setResultError(""); }}>Back to mock tests<ArrowLeft size={15}/></button></section>}
   </section>;
 }

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { AtSign, CheckCircle2, GraduationCap, Mail, Phone, Send, ShieldCheck } from "lucide-react";
-import { sendContactMessage } from "../../lib/learningApi.js";
 import styles from "./ContactUs.module.css";
 
 const initial = { name: "", email: "", subject: "", message: "", website: "" };
@@ -8,19 +7,10 @@ const initial = { name: "", email: "", subject: "", message: "", website: "" };
 export default function ContactUs() {
   const [form, setForm] = useState(initial);
   const [status, setStatus] = useState({ state: "idle", message: "" });
-  const [sending, setSending] = useState(false);
   function update(event) { setForm((current) => ({ ...current, [event.target.name]: event.target.value })); }
-  async function submit(event) {
+  function submit(event) {
     event.preventDefault();
-    setSending(true);
-    setStatus({ state: "idle", message: "" });
-    try {
-      await sendContactMessage(form);
-      setForm(initial);
-      setStatus({ state: "success", message: "Your message has been submitted." });
-    } catch (error) {
-      setStatus({ state: "error", message: error.message || "The message could not be sent. Please try again later." });
-    } finally { setSending(false); }
+    setStatus({ state: "success", message: "O bhai! 😂 Call kar le mere pe, bagal mein hi number hai. Message karne ke paise lagte hain! 😭" });
   }
   return <section className={styles.page}>
     <header className={styles.heading}><span><Mail size={22}/></span><div><p>WE’RE HERE TO HELP</p><h1>Contact Us</h1><small>Choose an appropriate contact or send the team a message.</small></div></header>
@@ -47,7 +37,7 @@ export default function ContactUs() {
         <label>Subject<input name="subject" value={form.subject} onChange={update} required minLength={3} maxLength={160}/></label>
         <label>Message<textarea name="message" value={form.message} onChange={update} required minLength={10} maxLength={5000} rows={5}/></label>
         <label className={styles.honeypot} aria-hidden="true" tabIndex={-1}>Leave this field empty<input name="website" value={form.website} onChange={update} tabIndex={-1} autoComplete="off"/></label>
-        <button type="submit" disabled={sending}>{sending ? "Sending…" : "Submit message"}<Send size={15}/></button>
+        <button type="submit">Submit Message<Send size={15}/></button>
         {status.message && <p className={status.state === "success" ? styles.success : styles.error} role={status.state === "success" ? "status" : "alert"}>{status.state === "success" && <CheckCircle2 size={16}/>} {status.message}</p>}
       </form>
     </div>

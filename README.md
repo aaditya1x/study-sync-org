@@ -37,7 +37,7 @@ PDF indexing uses `pdf2json` for page-preserving text extraction without native 
    The included `vercel.json` routes `/auth/callback` back to the React app on Vercel. For another host, configure its equivalent SPA fallback for `/auth/*`.
 10. In **Authentication > Providers > Google**, enable Google only after entering the Google OAuth client ID and secret. In Google Cloud, add Supabase's provider callback URL, `https://YOUR_PROJECT_ID.supabase.co/auth/v1/callback`, to the OAuth client's Authorized redirect URIs. The app itself redirects Google back through the URL from the prior step.
 11. In **Authentication > Email Templates**, retain the Supabase `{{ .ConfirmationURL }}` token in the confirmation template and `{{ .ConfirmationURL }}` in the reset-password template. These links include the secure callback URL selected by the app.
-12. To use AI and PDF indexing locally, set `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and the server-only `SUPABASE_SECRET_KEY` in `.env`. Never give the secret key a `VITE_` prefix.
+12. To use AI and PDF indexing locally, set `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and the server-only `SUPABASE_SECRET_KEY` in `.env`. Never give the secret key a `VITE_` prefix. To enable internet/reference-book research, additionally set `GEMINI_WEB_GROUNDING_FREE_TIER_ONLY=true` only when the Gemini API project has billing disabled. Grounded search otherwise stays disabled; the application never switches to a paid search service or paid model.
 13. Restart Vite after changing `.env`.
 
 The local Vite server serves `/api/ai`, `/api/index-book`, and `/api/ask-book`. In production, set those server-only variables in your hosting provider's function environment. Profile photo object paths are saved in the signed-in user's Supabase Auth `user_metadata.avatar_path`; this project does not depend on a `public.profiles` table for the photo.
@@ -52,6 +52,7 @@ In Vercel **Project Settings → Environment Variables**, add these server varia
 - `SUPABASE_PUBLISHABLE_KEY` — the project's publishable key from Supabase API Keys.
 - `SUPABASE_SECRET_KEY` — a server-only secret key from Supabase API Keys. The older `SUPABASE_SERVICE_ROLE_KEY` is also accepted by the routes, but do not expose either key to the browser.
 - `GEMINI_API_KEY` — the key from Google AI Studio for the Gemini API.
+- `GEMINI_WEB_GROUNDING_FREE_TIER_ONLY` — optional; set to `true` only for a Gemini Developer API project that remains on the Free Tier with billing disabled. The research step uses Gemini 2.5 Flash-Lite Google Search grounding (500 grounded prompts per day on the current free tier); Google enforces that project quota and the API returns a quota error without a paid fallback. Leave it unset or `false` to keep web research disabled.
 
 Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` separately for the frontend build. Never prefix the Gemini or Supabase secret key with `VITE_`. After changing Vercel variables, create a new deployment; existing deployments do not receive environment variable changes. The API routes report missing variable names, without values, in the response and Vercel Function Logs.
 

@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { parseAIRequestBody } from "./src/lib/aiRequest.js";
 
 function loadApiHandler(filename) {
   const filePath = resolve(process.cwd(), "api", filename);
@@ -12,6 +13,7 @@ function localApiPlugin() {
   const routes = {
     "/api/ai": () => loadApiHandler("ai.js"),
     "/api/admin": () => loadApiHandler("admin.js"),
+    "/api/learning": () => loadApiHandler("learning.js"),
     "/api/index-book": () => loadApiHandler("index-book.js"),
     "/api/ask-book": () => loadApiHandler("ask-book.js"),
   };
@@ -28,7 +30,12 @@ function localApiPlugin() {
             const body = [];
             for await (const chunk of req) body.push(chunk);
             const rawBody = Buffer.concat(body).toString("utf8");
-            req.body = rawBody ? JSON.parse(rawBody) : {};
+            if (rawBody.length > 256 * 1024) {
+              const error = new Error("Request body is too large.");
+              error.status = 413;
+              throw error;
+            }
+            req.body = parseAIRequestBody(rawBody);
           }
 
           const { default: handler } = await route();
@@ -54,11 +61,11 @@ function localApiPlugin() {
         } catch (error) {
           console.error("Local API route failed:", error);
           if (!res.headersSent) {
-            res.statusCode = error instanceof SyntaxError ? 400 : 500;
+            res.statusCode = error.status || 500;
             res.setHeader("Content-Type", "application/json; charset=utf-8");
           }
           if (!res.writableEnded) {
-            res.end(JSON.stringify({ error: error instanceof SyntaxError ? "Request body must be valid JSON." : "Local API route failed." }));
+            res.end(JSON.stringify({ error: error.status ? error.message : "Local API route failed." }));
           }
         }
       });

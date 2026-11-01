@@ -57,6 +57,7 @@ export default function CourseLibrary({
   compact = false,
   initialSelectedCourseId = "",
   onOpenCourse,
+  onCourseContextChange,
   onViewAll,
   onUploadMaterial,
   autoOpenCreate = false,
@@ -441,6 +442,10 @@ export default function CourseLibrary({
   }
 
   const selectedCourse = courses.find((course) => String(course.id) === String(selectedCourseId));
+
+  useEffect(() => {
+    onCourseContextChange?.(selectedCourse || null);
+  }, [selectedCourse, onCourseContextChange]);
 
   useEffect(() => {
     if (!selectedCourse || !supabase) { setCurriculum([]); setCurriculumLoading(false); return; }

@@ -26,6 +26,7 @@ import { MaterialsPanel } from "./components/MaterialsPanel/index.js";
 import { SyllabusLibrary } from "./components/SyllabusLibrary/index.js";
 import { TasksPanel } from "./components/TasksPanel/index.js";
 import { AIStudyTools } from "./components/AIStudyTools/index.js";
+import FloatingAIAssistant from "./components/AIStudyTools/FloatingAIAssistant.jsx";
 import { ProgressReport } from "./components/ProgressReport/index.js";
 import { SettingsPanel } from "./components/SettingsPanel/index.js";
 import { Toast } from "./components/Toast/index.js";
@@ -41,6 +42,8 @@ import { usePersistentState } from "./hooks/usePersistentState.js";
 import { supabase, STORAGE_BUCKETS } from "./lib/supabase.js";
 import { fetchPlatformRole, getWorkspaceAccess } from "./lib/workspaceAccess.js";
 import { visibleCoursesForWorkspace, visibleMaterialsForWorkspace, courseVisibleToBranch } from "./lib/courseVisibility.js";
+import { buildAIPageContext } from "./lib/aiPageContext.js";
+import { isAllowedAINavigation } from "./lib/aiNavigation.js";
 import {
   initialCourses,
   initialMaterials,
@@ -85,6 +88,8 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedCourseId, setSelectedCourseId] = useState("");
+  const [selectedCourseForAI, setSelectedCourseForAI] = useState(null);
+  const [aiPageDetails, setAIPageDetails] = useState({});
   const [createCourseRequested, setCreateCourseRequested] = useState(false);
   const [uploadMaterialRequest, setUploadMaterialRequest] = useState({ open: false, courseId: "" });
   const [courseLoadStatus, setCourseLoadStatus] = useState("loading");
@@ -97,6 +102,12 @@ export default function App() {
   const [academicProfile, setAcademicProfile] = useState(null);
   const [academicProfileLoading, setAcademicProfileLoading] = useState(true);
   const [academicProfileError, setAcademicProfileError] = useState("");
+
+  useEffect(() => {
+    setAIPageDetails({});
+    setSelectedCourseForAI(null);
+    setSelectedCourseId("");
+  }, [session?.userId]);
 
   const userStoragePrefix = session?.userId
     ? `campusflow-${session.userId}`
@@ -531,6 +542,28 @@ async function handleLogout() {
     userId: session?.userId,
     branchId: academicProfile?.branch_id,
   }), [materials, scopedCourses, platformRole, session?.userId, academicProfile?.branch_id]);
+  const onAIPageDetailsChange = useCallback((details) => {
+    if (!details || typeof details.page !== "string" || typeof details.summary !== "string") return;
+    setAIPageDetails((current) => ({
+      ...current,
+      [details.page]: { page: details.page, summary: details.summary.slice(0, 3000) },
+    }));
+  }, []);
+  const onAINavigate = useCallback((section) => {
+    if (!isAllowedAINavigation(section) || !navItems.some((item) => item.id === section)) return;
+    setActive(section);
+    setMobileNavOpen(false);
+  }, []);
+  const aiPageContext = useMemo(() => buildAIPageContext({
+    page: active,
+    role: platformRole,
+    courses: scopedCourses,
+    materials: scopedMaterials,
+    tasks,
+    chapterProgressByCourse,
+    selectedCourse: selectedCourseForAI,
+    pageDetails: Object.values(aiPageDetails),
+  }), [active, platformRole, scopedCourses, scopedMaterials, tasks, chapterProgressByCourse, selectedCourseForAI, aiPageDetails]);
   const academicShared = { ...shared, courses: scopedCourses, materials: scopedMaterials };
 
   const visibleNavItems = platformRole === "super_admin"
@@ -679,6 +712,7 @@ async function handleLogout() {
                 platformRole={platformRole}
                 compact
                 onOpenCourse={openCourse}
+                onCourseContextChange={setSelectedCourseForAI}
                 onViewAll={() => setActive("Courses")}
                 onCourseLoadStatusChange={setCourseLoadStatus}
                 onChapterProgressChange={setChapterProgressByCourse}
@@ -721,11 +755,13 @@ async function handleLogout() {
           onAcademicProfileChange={setAcademicProfile}
           materials={materials}
           initialSelectedCourseId={selectedCourseId}
+          onCourseContextChange={setSelectedCourseForAI}
           onUploadMaterial={requestUpload}
           autoOpenCreate={createCourseRequested}
           onCreateFormOpened={clearCourseRequest}
           onCourseLoadStatusChange={setCourseLoadStatus}
           onChapterProgressChange={setChapterProgressByCourse}
+          onPageContextChange={onAIPageDetailsChange}
         />}
 
         {active === "Materials" && <MaterialsPanel
@@ -737,26 +773,30 @@ async function handleLogout() {
           autoOpenUpload={uploadMaterialRequest.open}
           onUploadFormOpened={clearUploadRequest}
           onOpenCourses={() => { setCreateCourseRequested(true); setActive("Courses"); }}
+          onPageContextChange={onAIPageDetailsChange}
         />}
 
         {active === "Syllabus" && <SyllabusLibrary
+          platformRole={platformRole}
           query={query}
           courses={scopedCourses}
-          materials={materials}
+          materials={scopedMaterials}
+          onPageContextChange={onAIPageDetailsChange}
           loading={courseLoadStatus === "loading" || materialLoadStatus === "loading"}
           coursesStatus={courseLoadStatus}
           materialsStatus={materialLoadStatus}
         />}
 
-        {active === "Tasks" && <><AcademicAssignments courses={scopedCourses} /><TasksPanel {...shared} /></>}
+        {active === "Tasks" && <><AcademicAssignments courses={scopedCourses} onPageContextChange={onAIPageDetailsChange} /><TasksPanel {...shared} /></>}
 
-        {active === "Mock Tests" && <MockTests role={platformRole} courses={scopedCourses} />}
-        {active === "Previous Year Questions" && <PreviousYearQuestions role={platformRole} courses={scopedCourses} onOpenMockTests={() => setActive("Mock Tests")} />}
+        {active === "Mock Tests" && <MockTests role={platformRole} courses={scopedCourses} onPageContextChange={onAIPageDetailsChange} />}
+        {active === "Previous Year Questions" && <PreviousYearQuestions role={platformRole} courses={scopedCourses} onOpenMockTests={() => setActive("Mock Tests")} onPageContextChange={onAIPageDetailsChange} />}
         {active === "Contact Us" && <ContactUs />}
 
         {active === "AI Tools" && (
           <AIStudyTools
-            materials={materials}
+            materials={scopedMaterials}
+            pageContext={aiPageContext}
             notify={notify}
             onOpenMaterials={() => setActive("Materials")}
           />
@@ -790,6 +830,7 @@ async function handleLogout() {
         {active === "Admin" && platformRole === "super_admin" && <AdminDashboard notify={notify} />}
       </main>
 
+      <FloatingAIAssistant userId={session?.userId} role={platformRole} pageContext={aiPageContext} onNavigate={onAINavigate} />
       <Toast message={toast} />
     </AppShell>
   );

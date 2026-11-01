@@ -71,6 +71,7 @@ export default function MaterialsPanel({
   onUploadFormOpened,
   onLoadStatusChange,
   onOpenCourses,
+  onPageContextChange,
   platformRole = "student",
 }) {
   const inputRef = useRef(null);
@@ -505,6 +506,16 @@ export default function MaterialsPanel({
   }
 
   const list = compact ? [...materials].sort((a, b) => new Date(b.addedAt || 0) - new Date(a.addedAt || 0)).slice(0, 3) : filteredMaterials;
+  const pageContextSummary = list.slice(0, 20).map((item, index) => {
+    const courseId = selectedCourseId(item);
+    const courseName = courseNames.get(String(courseId)) || "Unassigned";
+    const shared = item.isShared === true || item.is_shared === true;
+    return `${index + 1}. ${item.name || "Untitled material"}${item.subject ? ` · ${item.subject}` : ""} · ${courseName} · ${shared ? "shared" : "private to current user"} · ${item.type || "file"}`;
+  }).join("\n") || "No authorized materials are currently visible.";
+
+  useEffect(() => {
+    onPageContextChange?.({ page: "Materials", summary: `Visible authorized material metadata only; file contents and storage paths are excluded.\n${pageContextSummary}` });
+  }, [onPageContextChange, pageContextSummary]);
 
   return (
     <section className={styles.panel}>

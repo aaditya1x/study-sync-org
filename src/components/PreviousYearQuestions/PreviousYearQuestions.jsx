@@ -8,12 +8,14 @@ import styles from "./PreviousYearQuestions.module.css";
 const BUCKET = "previous-year-papers";
 const YEARS = Array.from({ length: 31 }, (_, index) => new Date().getFullYear() - index);
 const SUBJECTS = ["ESECE201D", "PCCSE201", "PCCSE203", "PCCSE205", "PCCSE207"];
-const blank = { title: "", course_id: "", semester: "3", exam_year: String(new Date().getFullYear()), unit_id: "", verified: false, is_published: false };
+const blank = { title: "", degree_id: "", branch_id: "", academic_cycle_id: "", course_id: "", semester: "3", exam_year: String(new Date().getFullYear()), unit_id: "", verified: false, is_published: false };
 
-export default function PreviousYearQuestions({ role, courses = [], onOpenMockTests }) {
+export default function PreviousYearQuestions({ role, courses = [], onOpenMockTests, onPageContextChange }) {
   const isAdmin = role === "super_admin";
   const [rows, setRows] = useState([]);
   const [units, setUnits] = useState([]);
+  const [catalog, setCatalog] = useState({ degrees: [], branches: [], cycles: [] });
+  const [catalogError, setCatalogError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -35,10 +37,35 @@ export default function PreviousYearQuestions({ role, courses = [], onOpenMockTe
 
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => {
-    if (!isAdmin || !supabase || !courses.length) { setUnits([]); return; }
-    supabase.from("academic_units").select("id,course_id,title,position").in("course_id", courses.map((course) => course.id)).is("archived_at", null).order("position")
-      .then(({ data, error: readError }) => { if (!readError) setUnits(data || []); });
+    let active = true;
+    if (!isAdmin || !supabase) { setUnits([]); setCatalog({ degrees: [], branches: [], cycles: [] }); return () => { active = false; }; }
+    Promise.all([
+      supabase.from("academic_degrees").select("id,name").is("archived_at", null).order("name"),
+      supabase.from("academic_branches").select("id,degree_id,name").is("archived_at", null).order("name"),
+      supabase.from("academic_cycles").select("id,label").is("archived_at", null).order("label", { ascending: false }),
+      courses.length ? supabase.from("academic_units").select("id,course_id,title,position").in("course_id", courses.map((course) => course.id)).is("archived_at", null).order("position") : Promise.resolve({ data: [], error: null }),
+    ]).then(([degrees, branches, cycles, unitRows]) => {
+      if (!active) return;
+      if ([degrees, branches, cycles, unitRows].some((result) => result.error)) {
+        setCatalogError("Academic options could not be loaded. Check that the academic catalog and PYQ migrations are installed.");
+        setCatalog({ degrees: [], branches: [], cycles: [] });
+        setUnits([]);
+        return;
+      }
+      setCatalog({ degrees: degrees.data || [], branches: branches.data || [], cycles: cycles.data || [] });
+      setUnits(unitRows.data || []);
+      setCatalogError("");
+    }).catch(() => {
+      if (active) setCatalogError("Academic options could not be loaded. Check the Supabase policies and migrations.");
+    });
+    return () => { active = false; };
   }, [isAdmin, courses]);
+
+  const availableBranches = catalog.branches.filter((branch) => !form.degree_id || branch.degree_id === form.degree_id);
+  const availableCourses = courses.filter((course) => !course.archived_at
+    && course.branch_id === form.branch_id
+    && (!form.academic_cycle_id || !course.academic_cycle_id || course.academic_cycle_id === form.academic_cycle_id)
+    && Number(course.semester) === Number(form.semester));
 
   const visible = useMemo(() => rows.filter((paper) => {
     const course = courses.find((item) => item.id === paper.course_id);
@@ -51,6 +78,20 @@ export default function PreviousYearQuestions({ role, courses = [], onOpenMockTe
       && (filter.unit === "all" || String(paper.unit_id || "") === filter.unit);
   }), [rows, courses, filter]);
 
+  useEffect(() => {
+    const papers = visible.slice(0, 25).map((paper) => {
+      const course = courses.find((item) => item.id === paper.course_id);
+      return `- ${paper.title}; ${course?.name || course?.title || "Unspecified subject"}; semester ${paper.semester}; exam year ${paper.exam_year}; ${paper.is_published && paper.verified ? "published and verified" : "unpublished draft"}`;
+    });
+    const summary = [
+      `Current paper filters: ${filter.query || "no search"}; subject ${filter.subject}; semester ${filter.semester}; year ${filter.year}; unit ${filter.unit}.`,
+      loading ? "Accessible papers are still loading." : `Accessible paper rows shown: ${visible.length}.`,
+      ...papers,
+      error ? "The page reports an error; missing papers are not inferred." : "",
+    ].filter(Boolean).join("\n").slice(0, 6000);
+    onPageContextChange?.({ page: "Previous Year Questions", summary });
+  }, [visible, courses, filter, loading, error, onPageContextChange]);
+
   async function upload(event) {
     event.preventDefault();
     if (!isAdmin || !supabase) return;
@@ -58,6 +99,13 @@ export default function PreviousYearQuestions({ role, courses = [], onOpenMockTe
       setError("Select a valid PDF file up to 25 MB."); return;
     }
     if (form.is_published && !form.verified) { setError("Verify the uploaded paper before publishing it as an official PYQ."); return; }
+    const selectedCourse = courses.find((course) => course.id === form.course_id);
+    if (!selectedCourse || !form.degree_id || !form.branch_id || !form.academic_cycle_id
+      || selectedCourse.branch_id !== form.branch_id
+      || (selectedCourse.academic_cycle_id && selectedCourse.academic_cycle_id !== form.academic_cycle_id)
+      || Number(selectedCourse.semester) !== Number(form.semester)) {
+      setError("Choose a degree, branch, academic cycle, semester, and matching subject before uploading."); return;
+    }
     setSaving(true); setError("");
     let path = "";
     try {
@@ -93,15 +141,24 @@ export default function PreviousYearQuestions({ role, courses = [], onOpenMockTe
 
   async function togglePublish(paper) {
     if (!isAdmin || !supabase) return;
-    if (!paper.is_published && !paper.verified && !window.confirm("Publishing marks this uploaded document as a verified official previous-year paper. Have you checked the source and file contents?")) return;
+    if (!paper.is_published && !paper.verified) { setError("Verify the PDF and its metadata before publishing it to students."); return; }
     const publish = !paper.is_published;
     const { data: auth } = await supabase.auth.getUser();
     const { error: updateError } = await supabase.from("previous_year_papers").update({
-      is_published: publish, verified: publish ? true : paper.verified,
+      is_published: publish, verified: paper.verified,
       published_by: publish ? auth.user.id : null, published_at: publish ? new Date().toISOString() : null,
     }).eq("id", paper.id);
     if (updateError) setError(updateError.message || "Paper visibility could not be changed.");
     else refresh();
+  }
+
+  async function toggleVerified(paper) {
+    if (!isAdmin || !supabase || paper.is_published) return;
+    const verified = !paper.verified;
+    if (verified && !window.confirm(`Confirm that ${paper.original_filename} is an authentic official PYQ and the metadata is correct?`)) return;
+    const { error: updateError } = await supabase.from("previous_year_papers").update({ verified }).eq("id", paper.id);
+    if (updateError) setError(updateError.message || "Paper verification could not be changed.");
+    else await refresh();
   }
 
   async function removePaper(paper) {
@@ -121,22 +178,27 @@ export default function PreviousYearQuestions({ role, courses = [], onOpenMockTe
     <header className={styles.heading}><span><FileText size={23}/></span><div><p>VERIFIED DOCUMENT LIBRARY</p><h1>Previous Year Questions</h1><small>Official PYQ labels are shown only for verified papers uploaded by an authorized administrator.</small></div></header>
     <section className={styles.practice}><div><span><ShieldCheck size={18}/></span><div><p>IMPORTANT PRACTICE QUESTIONS</p><h2>Practice without mixing sources</h2><small>Generated practice tests stay in a separate section and are never labeled as official exam papers.</small></div></div><button type="button" onClick={onOpenMockTests}>Open Mock Tests</button></section>
     {error && <p className={styles.error} role="alert">{error}</p>}
-    {isAdmin && <details className={styles.admin} open><summary><Upload size={16}/> Upload and manage official papers</summary><form onSubmit={upload}>
+    {isAdmin && <section className={styles.admin} aria-labelledby="pyq-admin-title"><h2 id="pyq-admin-title"><Upload size={16}/> Upload and manage official papers</h2><form onSubmit={upload}>
       <label>Paper title<input name="title" value={form.title} onChange={updateForm} maxLength={200} placeholder="Title shown to students"/></label>
-      <label>Subject<select name="course_id" value={form.course_id} onChange={updateForm}><option value="">All subjects / unspecified</option>{courses.filter((course) => SUBJECTS.includes(String(course.code || course.course_code || "").toUpperCase())).map((course) => <option key={course.id} value={course.id}>{course.code || course.course_code} · {course.name || course.title}</option>)}</select></label>
-      <label>Semester<select name="semester" value={form.semester} onChange={updateForm}>{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value}>{value}</option>)}</select></label>
+      <label>Degree<select name="degree_id" value={form.degree_id} onChange={(event) => setForm((old) => ({ ...old, degree_id: event.target.value, branch_id: "", course_id: "", unit_id: "" }))} required><option value="">Select degree</option>{catalog.degrees.map((degree) => <option key={degree.id} value={degree.id}>{degree.name}</option>)}</select></label>
+      <label>Branch<select name="branch_id" value={form.branch_id} onChange={(event) => setForm((old) => ({ ...old, branch_id: event.target.value, course_id: "", unit_id: "" }))} disabled={!form.degree_id} required><option value="">Select branch</option>{availableBranches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
+      <label>Academic cycle / year<select name="academic_cycle_id" value={form.academic_cycle_id} onChange={(event) => setForm((old) => ({ ...old, academic_cycle_id: event.target.value, course_id: "", unit_id: "" }))} required><option value="">Select academic cycle</option>{catalog.cycles.map((cycle) => <option key={cycle.id} value={cycle.id}>{cycle.label}</option>)}</select></label>
+      <label>Semester<select name="semester" value={form.semester} onChange={(event) => setForm((old) => ({ ...old, semester: event.target.value, course_id: "", unit_id: "" }))} required>{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>Semester {value}</option>)}</select></label>
+      <label>Subject<select name="course_id" value={form.course_id} onChange={(event) => setForm((old) => ({ ...old, course_id: event.target.value, unit_id: "" }))} disabled={!form.branch_id || !form.academic_cycle_id} required><option value="">Select subject</option>{availableCourses.map((course) => <option key={course.id} value={course.id}>{course.code || course.course_code} · {course.name || course.title}</option>)}</select></label>
       <label>Exam year<select name="exam_year" value={form.exam_year} onChange={updateForm}>{YEARS.map((year) => <option key={year}>{year}</option>)}</select></label>
-      <label>Unit<select name="unit_id" value={form.unit_id} onChange={updateForm}><option value="">All units</option>{units.filter((unit) => !form.course_id || unit.course_id === form.course_id).map((unit) => <option key={unit.id} value={unit.id}>{unit.title}</option>)}</select></label>
+      <label>Unit / chapter (optional)<select name="unit_id" value={form.unit_id} onChange={updateForm}><option value="">All units</option>{units.filter((unit) => unit.course_id === form.course_id).map((unit) => <option key={unit.id} value={unit.id}>{unit.title}</option>)}</select></label>
       <label>Verified source<input type="checkbox" name="verified" checked={form.verified} onChange={updateForm}/></label>
       <label>Publish to students<input type="checkbox" name="is_published" checked={form.is_published} onChange={updateForm} disabled={!form.verified}/></label>
       <label className={styles.fileInput}>PDF file<input type="file" accept="application/pdf,.pdf" onChange={(event) => setFile(event.target.files?.[0] || null)} required/></label>
       <p>Private storage · PDF only · Maximum 25 MB. Publishing is restricted by Supabase RLS to an active Super Admin.</p>
-      <button type="submit" disabled={saving}>{saving ? "Uploading…" : "Upload paper"}<Upload size={15}/></button>
-    </form></details>}
+      {catalogError && <p role="alert">{catalogError}</p>}
+      {form.branch_id && form.academic_cycle_id && !availableCourses.length && <p role="status">No active subjects match this branch, cycle, and semester. Create or allocate a subject first.</p>}
+      <button type="submit" disabled={saving || Boolean(catalogError)}>{saving ? "Uploading…" : "Upload paper"}<Upload size={15}/></button>
+    </form></section>}
     <div className={styles.filters}><label className={styles.search}><Search size={15}/><input value={filter.query} onChange={(event) => setFilter((old) => ({ ...old, query: event.target.value }))} placeholder="Search papers"/></label><label><Filter size={14}/><select value={filter.subject} onChange={(event) => setFilter((old) => ({ ...old, subject: event.target.value }))}><option value="all">All subjects</option>{SUBJECTS.map((code) => <option key={code}>{code}</option>)}</select></label><label><select aria-label="Filter semester" value={filter.semester} onChange={(event) => setFilter((old) => ({ ...old, semester: event.target.value }))}><option value="all">All semesters</option>{Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={String(index + 1)}>Semester {index + 1}</option>)}</select></label><label><select aria-label="Filter year" value={filter.year} onChange={(event) => setFilter((old) => ({ ...old, year: event.target.value }))}><option value="all">All years</option>{[...new Set([...YEARS, ...rows.map((row) => row.exam_year)])].sort((a, b) => b - a).map((year) => <option key={year}>{year}</option>)}</select></label><label><select aria-label="Filter unit" value={filter.unit} onChange={(event) => setFilter((old) => ({ ...old, unit: event.target.value }))}><option value="all">All units</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.title}</option>)}</select></label></div>
     {loading ? <p className={styles.empty}>Loading published question papers…</p> : visible.length ? <div className={styles.list}>{visible.map((paper) => {
       const course = courses.find((item) => item.id === paper.course_id);
-      return <article className={styles.paper} key={paper.id}><div className={styles.pdf}><FileCheck2 size={19}/></div><div className={styles.details}><span className={styles.badge}>{paper.is_published && paper.verified ? "Verified official PYQ" : "Admin draft · not published"}</span><h2>{paper.title}</h2><p>{course?.code || "All subjects"} · Semester {paper.semester} · {paper.exam_year}{paper.unit_id ? ` · ${units.find((unit) => unit.id === paper.unit_id)?.title || "Unit"}` : ""}</p><small>{paper.original_filename} · {(paper.file_size / 1048576).toFixed(2)} MB · Uploaded {new Date(paper.created_at).toLocaleDateString()}</small></div><div className={styles.actions}><button type="button" onClick={() => openFile(paper)}>Preview</button><button type="button" onClick={() => openFile(paper, true)} aria-label={`Download ${paper.original_filename}`}><Download size={15}/>Download</button>{isAdmin && <button type="button" onClick={() => togglePublish(paper)}>{paper.is_published ? "Unpublish" : "Publish"}</button>}{isAdmin && <button type="button" className={styles.delete} onClick={() => removePaper(paper)} disabled={saving} aria-label={`Delete ${paper.original_filename}`}><Trash2 size={15}/></button>}</div></article>;
+      return <article className={styles.paper} key={paper.id}><div className={styles.pdf}><FileCheck2 size={19}/></div><div className={styles.details}><span className={styles.badge}>{paper.is_published && paper.verified ? "Verified official PYQ" : "Admin draft · not published"}</span><h2>{paper.title}</h2><p>{course?.code || "All subjects"} · Semester {paper.semester} · {paper.exam_year}{paper.unit_id ? ` · ${units.find((unit) => unit.id === paper.unit_id)?.title || "Unit"}` : ""}</p><small>{paper.original_filename} · {(paper.file_size / 1048576).toFixed(2)} MB · Uploaded {new Date(paper.created_at).toLocaleDateString()}</small></div><div className={styles.actions}><button type="button" onClick={() => openFile(paper)}>Preview</button><button type="button" onClick={() => openFile(paper, true)} aria-label={`Download ${paper.original_filename}`}><Download size={15}/>Download</button>{isAdmin && !paper.is_published && <button type="button" onClick={() => toggleVerified(paper)}>{paper.verified ? "Unverify" : "Verify"}</button>}{isAdmin && <button type="button" onClick={() => togglePublish(paper)}>{paper.is_published ? "Unpublish" : "Publish"}</button>}{isAdmin && <button type="button" className={styles.delete} onClick={() => removePaper(paper)} disabled={saving} aria-label={`Delete ${paper.original_filename}`}><Trash2 size={15}/></button>}</div></article>;
     })}</div> : <div className={styles.empty}><LockKeyhole size={20}/><div><strong>No published papers are available for these filters.</strong><p>Official papers appear here only after an administrator uploads and verifies the actual PDF. No example or generated files are shown.</p></div></div>}
     {preview && <div className={styles.modal} role="dialog" aria-modal="true" aria-label={`Preview ${preview.title}`}><div><header><div><strong>{preview.title}</strong><small>{preview.original_filename} · Private signed preview</small></div><button type="button" onClick={() => setPreview(null)} aria-label="Close PDF preview"><X size={18}/></button></header><iframe title={preview.title} src={preview.url}/><a href={preview.url} download={preview.original_filename} target="_blank" rel="noreferrer"><Download size={15}/>Download PDF</a></div></div>}
   </section>;
