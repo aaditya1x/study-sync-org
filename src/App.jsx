@@ -8,6 +8,9 @@ import {
   FileText,
   GraduationCap,
   LayoutDashboard,
+  ClipboardCheck,
+  ContactRound,
+  ScrollText,
   Settings2,
   ShieldCheck,
 } from "lucide-react";
@@ -29,6 +32,9 @@ import { Toast } from "./components/Toast/index.js";
 import { Login } from "./components/Login/index.js";
 import AcademicProfile from "./components/AcademicProfile/AcademicProfile.jsx";
 import AcademicAssignments from "./components/AcademicAssignments/AcademicAssignments.jsx";
+import MockTests from "./components/MockTests/MockTests.jsx";
+import PreviousYearQuestions from "./components/PreviousYearQuestions/PreviousYearQuestions.jsx";
+import ContactUs from "./components/ContactUs/ContactUs.jsx";
 import { LegalPage, PublicLanding } from "./components/PublicSite.jsx";
 
 import { usePersistentState } from "./hooks/usePersistentState.js";
@@ -48,10 +54,13 @@ const navItems = [
   { id: "Syllabus", label: "Curriculum", group: "Academics", icon: GraduationCap },
   { id: "Materials", label: "Materials & notes", group: "Study space", icon: FileText },
   { id: "Tasks", label: "Assignments", group: "Study space", icon: CheckSquare },
+  { id: "Mock Tests", label: "Mock Tests", group: "Study space", icon: ClipboardCheck },
+  { id: "Previous Year Questions", label: "Previous Year Questions", group: "Academics", icon: ScrollText },
   { id: "AI Tools", label: "AI study tools", group: "Workspace", icon: BrainCircuit },
   { id: "Progress", label: "Progress reports", group: "Workspace", icon: ChartNoAxesCombined },
   { id: "Settings", label: "Profile & appearance", group: "Settings", icon: Settings2 },
   { id: "Academic Profile", label: "My academic profile", group: "Settings", icon: GraduationCap },
+  { id: "Contact Us", label: "Contact Us", group: "Support", icon: ContactRound },
 ];
 
 function makeSession(user) {
@@ -511,9 +520,10 @@ async function handleLogout() {
   };
 
   const scopedCourses = useMemo(() => courses.filter((course) => {
+    if (platformRole === "super_admin") return true;
     if (course.owner_id && course.owner_id === session?.userId) return true;
     return Boolean(academicProfile?.branch_id && course.branch_id === academicProfile.branch_id);
-  }), [courses, academicProfile?.branch_id, session?.userId]);
+  }), [courses, academicProfile?.branch_id, session?.userId, platformRole]);
   const academicShared = { ...shared, courses: scopedCourses };
 
   const visibleNavItems = platformRole === "super_admin"
@@ -523,6 +533,7 @@ async function handleLogout() {
 
   if (currentPath === "/terms") return <LegalPage type="terms" />;
   if (currentPath === "/privacy") return <LegalPage type="privacy" />;
+  if (currentPath === "/contact") return <div className={styles.publicContact}><ContactUs /></div>;
 
   if (authLoading) {
     return <main className={styles.loading} aria-live="polite">Loading your workspace…</main>;
@@ -728,6 +739,10 @@ async function handleLogout() {
         />}
 
         {active === "Tasks" && <><AcademicAssignments courses={scopedCourses} /><TasksPanel {...shared} /></>}
+
+        {active === "Mock Tests" && <MockTests role={platformRole} courses={scopedCourses} />}
+        {active === "Previous Year Questions" && <PreviousYearQuestions role={platformRole} courses={scopedCourses} onOpenMockTests={() => setActive("Mock Tests")} />}
+        {active === "Contact Us" && <ContactUs />}
 
         {active === "AI Tools" && (
           <AIStudyTools

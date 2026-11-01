@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Activity, Archive, BookOpen, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight,
+  Activity, Archive, BookOpen, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck,
   ClipboardList, FileText, GraduationCap, Layers3, Megaphone, RefreshCw, Search,
-  Settings2, ShieldCheck, UserCog, Users,
+  Settings2, ShieldCheck, UserCog, Users, Mail,
 } from "lucide-react";
 import { adminRequest } from "../../lib/adminApi.js";
 import { supabase } from "../../lib/supabase.js";
 import AcademicCatalogAdmin from "../AcademicHub/AcademicCatalogAdmin.jsx";
+import MockTestManagement from "./MockTestManagement.jsx";
+import ContactInbox from "./ContactInbox.jsx";
 import styles from "./AdminDashboard.module.css";
 
 const sections = [
@@ -15,6 +17,8 @@ const sections = [
   ["catalog", "Academic catalog", GraduationCap],
   ["courses", "Courses & subjects", BookOpen],
   ["curriculum", "Units & topics", Layers3],
+  ["learning", "Mock test management", ClipboardCheck],
+  ["contact", "Contact messages", Mail],
   ["assignments", "Assignments", ClipboardList],
   ["resources", "Shared resources", FileText],
   ["teachers", "Teacher assignments", UserCog],
@@ -171,6 +175,8 @@ export default function AdminDashboard({ notify }) {
           {section === "catalog" && data && <CatalogManagement data={data} onRefresh={refresh} notify={notify}/>}
           {section === "courses" && <CourseManagement rows={visibleRows} search={search} setSearch={setSearch} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity} onArchive={archive}/>}
           {section === "curriculum" && <CurriculumManagement data={auxiliary} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity} onArchive={archive}/>}
+          {section === "learning" && <MockTestManagement/>}
+          {section === "contact" && <ContactInbox/>}
           {section === "assignments" && <AssignmentManagement rows={visibleRows} courses={auxiliary.courses} search={search} setSearch={setSearch} draft={draft} setDraft={setDraft} saving={saving} onSave={saveEntity} onArchive={archive}/>}
           {section === "resources" && <ResourceManagement rows={visibleRows} search={search} setSearch={setSearch} saving={saving} onSave={run} onArchive={archive}/>}
           {section === "teachers" && <TeacherManagement rows={visibleRows} search={search} setSearch={setSearch} />}

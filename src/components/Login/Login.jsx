@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Eye, EyeOff, GraduationCap, KeyRound, LockKeyhole, Mail, UserRound } from "lucide-react";
 import { getAuthRedirectUrl, supabase } from "../../lib/supabase.js";
+import { exchangeAuthCallbackCode, readAuthCallback } from "../../lib/authCallback.js";
 import styles from "./Login.module.css";
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -20,24 +21,29 @@ export default function Login({ onLogin, initialMode, onExitRecovery }) {
   const [showPassword, setShowPassword] = useState(false); const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false); const [loading, setLoading] = useState(false);
   const [error, setError] = useState(""); const [message, setMessage] = useState(""); const [registeredEmail, setRegisteredEmail] = useState("");
+  const onLoginRef = useRef(onLogin);
   const strength = useMemo(() => passwordScore(password), [password]);
 
+  useEffect(() => { onLoginRef.current = onLogin; }, [onLogin]);
+
   useEffect(() => {
-    if (!supabase) return undefined;
-    const url = new URL(window.location.href); const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
-    const isRecovery = url.pathname === "/auth/callback" && (url.searchParams.get("type") === "recovery" || hash.get("type") === "recovery");
-    const callbackError = url.searchParams.get("error_description") || hash.get("error_description");
-    if (callbackError) { setMode("callback-error"); setError(callbackError); window.history.replaceState({}, "", "/"); return undefined; }
-    if (isRecovery) { setMode("reset"); return undefined; }
-    if (url.pathname === "/auth/callback" && url.searchParams.get("code")) {
+    let active = true;
+    if (!supabase) return () => { active = false; };
+    const callback = readAuthCallback(window.location.href);
+    if (callback.error) { setMode("callback-error"); setError(callback.error); window.history.replaceState({}, "", "/"); return () => { active = false; }; }
+    if (callback.isRecovery) { setMode("reset"); return () => { active = false; }; }
+    if (callback.code) {
       setMode("callback");
-      supabase.auth.exchangeCodeForSession(url.searchParams.get("code")).then(({ data, error: exchangeError }) => {
-        if (exchangeError || !data.session) { setMode("callback-error"); setError(authErrorMessage(exchangeError || new Error("This verification link is invalid or has expired."))); return; }
-        window.history.replaceState({}, "", "/"); onLogin?.(data.user);
+      exchangeAuthCallbackCode(supabase.auth, callback.code).then(({ user }) => {
+        if (!active) return;
+        window.history.replaceState({}, "", "/"); onLoginRef.current?.(user);
+      }).catch((exchangeError) => {
+        if (!active) return;
+        setMode("callback-error"); setError(authErrorMessage(exchangeError));
       });
     }
-    return undefined;
-  }, [onLogin]);
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (initialMode) setMode(initialMode);
