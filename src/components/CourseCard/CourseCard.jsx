@@ -8,7 +8,7 @@ const tones = {
   orange: "color-mix(in srgb,#d97732 12%,var(--surface))",
 };
 
-export default function CourseCard({ course, onOpen, onDelete, canManage = true }) {
+export default function CourseCard({ course, onOpen, onEdit, onDelete, canManage = true }) {
   const progress = Math.min(100, Math.max(0, Number(course.progress) || 0));
   const chapterTotal = course.chapterProgress?.total || 0;
   const chapterCompleted = course.chapterProgress?.completed || 0;
@@ -20,7 +20,7 @@ export default function CourseCard({ course, onOpen, onDelete, canManage = true 
         <span className={styles.semester}>Semester {course.semester || 1}</span>
       </div>
       <h3>{course.name}</h3>
-      <span className={styles.ownerBadge}>{canManage ? "Your course" : "Shared course"}</span>
+      <span className={styles.ownerBadge}>{canManage ? "Managed subject" : "Shared subject"}</span>
       <p className={styles.code}>{course.code || "Course code not set"} <span>·</span> {course.materials || 0} materials</p>
       {(course.branchName || course.cycleLabel || course.year_level) && <p className={styles.academicMeta}>{[course.branchName, course.cycleLabel, course.year_level ? `Year ${course.year_level}` : "", `Semester ${course.semester || 1}`].filter(Boolean).join(" · ")}</p>}
       <div className={styles.progressLabel}>
@@ -38,6 +38,7 @@ export default function CourseCard({ course, onOpen, onDelete, canManage = true 
       </div>
       <div className={styles.actions}>
         <button type="button" onClick={onOpen} className={styles.open}>Manage chapters <ArrowUpRight size={14} /></button>
+        {canManage && <button type="button" className={styles.open} onClick={onEdit} aria-label={`Edit ${course.name}`}>Edit subject</button>}
         {canManage && <button type="button" className={styles.delete} onClick={() => onDelete?.(course)} aria-label={`Delete ${course.name}`} title="Delete course"><Trash2 size={15} /></button>}
       </div>
     </article>

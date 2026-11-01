@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FileText, UploadCloud, Trash2, File, Download, LoaderCircle, Search,
-  X, Eye, RotateCw, FolderOpen, AlertCircle, Share2,
+  X, Eye, RotateCw, AlertCircle, Share2,
 } from "lucide-react";
 import { EmptyState } from "../EmptyState/index.js";
 import styles from "./MaterialsPanel.module.css";
@@ -58,21 +58,10 @@ function selectedCourseId(item) {
   return item.courseId || item.course_id || "";
 }
 
-function makeCourseCode(title, existingCourses) {
-  const base = title.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 10) || "COURSE";
-  let code = base;
-  let suffix = 2;
-  while (existingCourses.some((course) => (course.code || course.course_code)?.toUpperCase() === code)) {
-    code = `${base.slice(0, 7)}${suffix++}`;
-  }
-  return code;
-}
-
 export default function MaterialsPanel({
   materials = [],
   setMaterials,
   courses = [],
-  setCourses,
   notify,
   compact = false,
   query = "",
@@ -82,6 +71,7 @@ export default function MaterialsPanel({
   onUploadFormOpened,
   onLoadStatusChange,
   onOpenCourses,
+  platformRole = "student",
 }) {
   const inputRef = useRef(null);
   const dialogRef = useRef(null);
@@ -95,11 +85,6 @@ export default function MaterialsPanel({
   const [uploadError, setUploadError] = useState("");
   const [uploadAttempt, setUploadAttempt] = useState(0);
   const [dragActive, setDragActive] = useState(false);
-  const [creatingCourse, setCreatingCourse] = useState(false);
-  const [newCourseName, setNewCourseName] = useState("");
-  const [newCourseCode, setNewCourseCode] = useState("");
-  const [courseCreateError, setCourseCreateError] = useState("");
-  const [courseCreating, setCourseCreating] = useState(false);
   const [filterCourse, setFilterCourse] = useState(initialCourseId || "all");
   const [filterType, setFilterType] = useState("all");
   const [sortOrder, setSortOrder] = useState("newest");
@@ -299,58 +284,7 @@ export default function MaterialsPanel({
     setUploadOpen(false);
     setFile(null);
     setUploadError("");
-    setCreatingCourse(false);
     if (inputRef.current) inputRef.current.value = "";
-  }
-
-  async function createCourseForUpload(event) {
-    event?.preventDefault?.();
-    const name = newCourseName.trim();
-    if (name.length < 2) {
-      setCourseCreateError("Enter a course name with at least 2 characters.");
-      return;
-    }
-    if (!supabase) {
-      setCourseCreateError("Supabase is not configured.");
-      return;
-    }
-    setCourseCreating(true);
-    setCourseCreateError("");
-    try {
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-      if (authError) throw authError;
-      if (!authData.user) throw new Error("Sign in again to create a course.");
-      const ownCourses = courses.filter((course) => course.owner_id === authData.user.id);
-      const code = newCourseCode.trim().toUpperCase() || makeCourseCode(name, ownCourses);
-      if (ownCourses.some((course) => (course.code || course.course_code)?.toUpperCase() === code)) {
-        throw new Error("That course code is already in use.");
-      }
-      const { data, error } = await supabase.from("courses").insert({
-        owner_id: authData.user.id,
-        name,
-        title: name,
-        code,
-        course_code: code,
-        semester: 1,
-        description: "",
-        progress: 0,
-        color: "purple",
-        materials: 0,
-      }).select("id, owner_id, name, title, code, course_code, semester, description, color, created_at").single();
-      if (error) throw error;
-      const next = { ...data, name: data.name || data.title, code: data.code || data.course_code };
-      setCourses?.((current) => [next, ...current]);
-      setCourseId(next.id);
-      setFilterCourse(String(next.id));
-      setNewCourseName("");
-      setNewCourseCode("");
-      setCreatingCourse(false);
-      notify("Course created. Your selected file is ready to upload.");
-    } catch (error) {
-      setCourseCreateError(error.message || "Could not create the course.");
-    } finally {
-      setCourseCreating(false);
-    }
   }
 
   async function uploadMaterial(event) {
@@ -366,8 +300,8 @@ export default function MaterialsPanel({
       setUploadError(error.message || "The file could not be verified.");
       return;
     }
-    if (courseId && !courses.some((course) => String(course.id) === String(courseId))) {
-      setUploadError("Choose a course you can access, or select no course.");
+    if (!courseId || !courses.some((course) => String(course.id) === String(courseId))) {
+      setUploadError("Choose an existing subject that is available in your academic branch.");
       return;
     }
     if (!supabase || !isSupabaseConfigured) {
@@ -519,8 +453,9 @@ export default function MaterialsPanel({
       const { data: authData, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!authData.user) throw new Error("Sign in again to remove this material.");
-      const { error: rowError } = await supabase.from("study_materials")
-        .delete().eq("storage_path", deleteTarget.path).eq("user_id", authData.user.id);
+      let deleteRequest = supabase.from("study_materials").delete().eq("storage_path", deleteTarget.path);
+      if (platformRole !== "super_admin") deleteRequest = deleteRequest.eq("user_id", authData.user.id);
+      const { error: rowError } = await deleteRequest;
       if (rowError) throw rowError;
       setMaterials((current) => current.filter((item) => item.path !== deleteTarget.path));
       if (selectedMaterial?.path === deleteTarget.path) closePreview();
@@ -547,10 +482,9 @@ export default function MaterialsPanel({
       if (authError) throw authError;
       if (!authData.user) throw new Error("Sign in again to change sharing.");
       const nextShared = nextMaterialSharingValue(material.isShared);
-      const { error } = await supabase.from("study_materials")
-        .update({ is_shared: nextShared })
-        .eq("user_id", authData.user.id)
-        .eq("storage_path", material.path);
+      const updateRequest = supabase.from("study_materials").update({ is_shared: nextShared }).eq("storage_path", material.path);
+      if (platformRole !== "super_admin") updateRequest.eq("user_id", authData.user.id);
+      const { error } = await updateRequest;
       if (error) throw error;
       setMaterials((current) => current.map((item) => item.path === material.path ? { ...item, isShared: nextShared } : item));
       notify(nextShared
@@ -588,7 +522,7 @@ export default function MaterialsPanel({
 
       {uploadOpen && !compact && (
         <form className={styles.uploadForm} onSubmit={uploadMaterial}>
-          <div className={styles.uploadFormHeader}><div><h3>Upload study material</h3><p>Your file is shared with signed-in students. Course association is optional.</p></div><button type="button" onClick={resetUpload} disabled={uploading} aria-label="Cancel upload"><X size={17} /></button></div>
+          <div className={styles.uploadFormHeader}><div><h3>Upload study material</h3><p>Choose an existing subject. Files stay private until you share them with students in that subject’s branches.</p></div><button type="button" onClick={resetUpload} disabled={uploading} aria-label="Cancel upload"><X size={17} /></button></div>
 
           <div
             className={`${styles.dropZone} ${dragActive ? styles.dropActive : ""} ${file ? styles.dropHasFile : ""}`}
@@ -607,31 +541,16 @@ export default function MaterialsPanel({
           </div>
 
           <div className={styles.uploadFields}>
-            <label>Course <span>(optional)</span>
+            <label>Subject
               <select value={courseId} onChange={(event) => { setCourseId(event.target.value); setUploadError(""); }} disabled={uploading}>
-                <option value="">No course (unassigned)</option>
+                <option value="">Select a subject</option>
                 {courses.map((course) => <option key={course.id} value={course.id}>{course.name || course.title}{course.code ? ` · ${course.code}` : ""}</option>)}
               </select>
             </label>
             <p className={styles.fieldHint}>Topic field is not available in the current material schema, so it is not collected or saved.</p>
           </div>
 
-          {!courses.length && (
-            <div className={styles.noCourses}>
-              <FolderOpen size={18} /><div><strong>No courses available</strong><span>You can upload this as an unassigned material or create a course.</span></div>
-              {!creatingCourse && <button type="button" onClick={() => setCreatingCourse(true)}>Create course</button>}
-            </div>
-          )}
-
-          {creatingCourse && (
-          <div className={styles.quickCourse}>
-              <strong>New course</strong>
-              <input value={newCourseName} onChange={(event) => setNewCourseName(event.target.value)} placeholder="Course name" maxLength={100} required />
-              <input value={newCourseCode} onChange={(event) => setNewCourseCode(event.target.value)} placeholder="Course code (optional)" maxLength={16} />
-              {courseCreateError && <p role="alert">{courseCreateError}</p>}
-            <div><button type="button" onClick={() => createCourseForUpload()} disabled={courseCreating || !newCourseName.trim()}>{courseCreating ? "Creating…" : "Create course"}</button><button type="button" onClick={() => setCreatingCourse(false)} disabled={courseCreating}>Cancel</button></div>
-          </div>
-          )}
+          {!courses.length && <p className={styles.fieldHint}>No subjects are available for this account’s academic branch yet.</p>}
 
           {uploading && <div className={styles.progressState} role="status"><LoaderCircle size={16} /><div><strong>{uploadStage}</strong><div className={styles.progressTrack}><span /></div></div></div>}
           {uploadError && <div className={styles.uploadError} role="alert"><AlertCircle size={15} /><span>{uploadError}</span></div>}
@@ -678,11 +597,11 @@ export default function MaterialsPanel({
                 {material.indexError && <small className={styles.itemError}>{material.indexError}</small>}
               </button>
               {material.userId === currentUserId && isPdf && !material.isIndexed && <button type="button" className={styles.index} onClick={() => indexMaterial(material)} disabled={isIndexing} title={material.indexError || "Index PDF for AI study"}>{isIndexing ? <LoaderCircle size={14} /> : "Retry index"}</button>}
-      {material.userId === currentUserId && <button type="button" className={material.isShared ? styles.shared : styles.share} onClick={() => toggleSharedMaterial(material)} disabled={sharingPaths.has(material.path)} aria-pressed={material.isShared} title={material.isShared ? "Turn off student access to this material" : "Share this material with signed-in students"}><Share2 size={14} /><span>{sharingPaths.has(material.path) ? "Saving…" : material.isShared ? "Shared" : "Private"}</span></button>}
+      {(material.userId === currentUserId || platformRole === "super_admin") && <button type="button" className={material.isShared ? styles.shared : styles.share} onClick={() => toggleSharedMaterial(material)} disabled={sharingPaths.has(material.path)} aria-pressed={material.isShared} title={material.isShared ? "Turn off student access to this material" : "Share this material with students in mapped branches"}><Share2 size={14} /><span>{sharingPaths.has(material.path) ? "Saving…" : material.isShared ? "Shared" : "Private"}</span></button>}
               <button type="button" className={styles.open} onClick={() => openMaterialPreview(material)} disabled={previewLoading} aria-label={`Preview ${material.name}`} title="Preview material"><Eye size={15} /></button>
               {material.downloadUrl && <a className={styles.download} href={material.downloadUrl} download={material.name} target="_blank" rel="noreferrer" title="Download file" aria-label={`Download ${material.name}`}><Download size={15} /></a>}
               {material.downloadError && <small className={styles.itemError}>{material.downloadError}</small>}
-              {material.userId === currentUserId && <button type="button" className={styles.remove} onClick={() => setDeleteTarget(material)} title="Delete material" aria-label={`Delete ${material.name}`}><Trash2 size={15} /></button>}
+              {(material.userId === currentUserId || platformRole === "super_admin") && <button type="button" className={styles.remove} onClick={() => setDeleteTarget(material)} title="Delete material" aria-label={`Delete ${material.name}`}><Trash2 size={15} /></button>}
             </article>
           );
           return row;
@@ -703,7 +622,7 @@ export default function MaterialsPanel({
         </section>
       </div>}
 
-      {deleteTarget && <div className={styles.modalBackdrop} role="presentation"><section ref={dialogRef} className={styles.deleteDialog} role="alertdialog" aria-modal="true" aria-labelledby="delete-material-title" tabIndex={-1}><span className={styles.deleteIcon}><Trash2 size={19} /></span><h3 id="delete-material-title">Delete this material?</h3><p>{deleteTarget.name} and its stored file will be removed from your account.</p><div><button type="button" onClick={() => setDeleteTarget(null)} disabled={deleteBusy}>Keep material</button><button type="button" className={styles.confirmDelete} onClick={deleteMaterial} disabled={deleteBusy}>{deleteBusy ? "Removing…" : "Delete material"}</button></div></section></div>}
+      {deleteTarget && <div className={styles.modalBackdrop} role="presentation"><section ref={dialogRef} className={styles.deleteDialog} role="alertdialog" aria-modal="true" aria-labelledby="delete-material-title" tabIndex={-1}><span className={styles.deleteIcon}><Trash2 size={19} /></span><h3 id="delete-material-title">Delete this material?</h3><p>{deleteTarget.name} and its stored file will be removed.</p><div><button type="button" onClick={() => setDeleteTarget(null)} disabled={deleteBusy}>Keep material</button><button type="button" className={styles.confirmDelete} onClick={deleteMaterial} disabled={deleteBusy}>{deleteBusy ? "Removing…" : "Delete material"}</button></div></section></div>}
     </section>
   );
 }

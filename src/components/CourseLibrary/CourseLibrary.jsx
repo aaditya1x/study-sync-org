@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, BookOpen, Edit3, Plus, Trash2, X, UploadCloud, FileText, RotateCw } from "lucide-react";
 import { supabase } from "../../lib/supabase.js";
+import { branchIdsForCourse } from "../../lib/courseVisibility.js";
 import { CourseCard } from "../CourseCard/index.js";
 import { ChapterTracker } from "../ChapterTracker/index.js";
 import { EmptyState } from "../EmptyState/index.js";
 import styles from "./CourseLibrary.module.css";
 
-const COURSE_SELECT_COLUMNS = "id, owner_id, name, title, code, course_code, semester, description, color, created_at, branch_id, academic_cycle_id, year_level, archived_at";
+const COURSE_SELECT_COLUMNS = "id, owner_id, name, title, code, course_code, semester, description, color, created_at, branch_id, academic_cycle_id, year_level, archived_at, course_branch_visibility(branch_id)";
 
 function courseCode(title, requested, existing) {
   const input = requested.trim().toUpperCase();
@@ -23,6 +24,7 @@ function courseCode(title, requested, existing) {
 function normalizeCourse(course) {
   return {
     ...course,
+    visibleBranchIds: branchIdsForCourse(course),
     name: course.name || course.title || "Untitled subject",
     code: course.code || course.course_code || "",
     semester: course.semester ?? 1,
@@ -63,11 +65,9 @@ export default function CourseLibrary({
   onChapterProgressChange,
   academicProfile = {},
   academicCatalog = { branches: [], cycles: [] },
+  platformRole = "student",
 }) {
-  const [semester, setSemester] = useState("all");
   const [branchFilter, setBranchFilter] = useState("all");
-  const [cycleFilter, setCycleFilter] = useState("all");
-  const [yearFilter, setYearFilter] = useState("all");
   const [formOpen, setFormOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState(null);
   const [selectedCourseId, setSelectedCourseId] = useState(initialSelectedCourseId);
@@ -84,6 +84,11 @@ export default function CourseLibrary({
   const [chapters, setChapters] = useState([]);
   const [chapterLoading, setChapterLoading] = useState(false);
   const [chapterError, setChapterError] = useState("");
+  const [curriculum, setCurriculum] = useState([]);
+  const [curriculumLoading, setCurriculumLoading] = useState(false);
+  const [curriculumError, setCurriculumError] = useState("");
+  const [assignedBranches, setAssignedBranches] = useState([]);
+  const isSuperAdmin = platformRole === "super_admin";
 
   useEffect(() => {
     setSelectedCourseId(initialSelectedCourseId || "");
@@ -96,11 +101,11 @@ export default function CourseLibrary({
   }, [selectedCourseId, courses, coursesLoaded]);
 
   useEffect(() => {
-    if (!autoOpenCreate || compact) return;
+    if (!autoOpenCreate || compact || !isSuperAdmin) return;
     setEditingCourse(null);
     setFormOpen(true);
     onCreateFormOpened?.();
-  }, [autoOpenCreate, compact, onCreateFormOpened]);
+  }, [autoOpenCreate, compact, isSuperAdmin, onCreateFormOpened]);
 
   const loadCourses = useCallback(async () => {
     setCoursesLoaded(false);
@@ -282,29 +287,29 @@ export default function CourseLibrary({
   }
 
   const visible = useMemo(() => courses.filter((course) =>
-    (semester === "all" || String(course.semester) === semester)
-    && (branchFilter === "all" || String(course.branch_id || "") === branchFilter)
-    && (cycleFilter === "all" || String(course.academic_cycle_id || "") === cycleFilter)
-    && (yearFilter === "all" || String(course.year_level || "") === yearFilter)
+    (!isSuperAdmin || branchFilter === "all" || course.visibleBranchIds?.includes(String(branchFilter)))
     && `${course.name} ${course.code} ${course.description || ""}`.toLowerCase().includes(query.toLowerCase())
-  ), [courses, semester, branchFilter, cycleFilter, yearFilter, query]);
+  ), [courses, isSuperAdmin, branchFilter, query]);
 
   function startCreate() {
+    if (!isSuperAdmin) return;
     setEditingCourse(null);
     setTitle("");
     setCode("");
     setDescription("");
+    setAssignedBranches([]);
     setSemesterValue(academicProfile.semester || "1");
     setError("");
     setFormOpen(true);
   }
 
   function startEdit(course) {
-    if (course.owner_id !== currentUserId) return;
+    if (!isSuperAdmin) return;
     setEditingCourse(course);
     setTitle(course.name);
     setCode(course.code || "");
     setDescription(course.description || "");
+    setAssignedBranches(course.visibleBranchIds || []);
     setSemesterValue(String(course.semester || 1));
     setError("");
     setFormOpen(true);
@@ -323,6 +328,10 @@ export default function CourseLibrary({
     const cleanCode = courseCode(cleanTitle, code, ownCourses);
     if (cleanTitle.length < 2) {
       setError("Use at least 2 characters for the course name.");
+      return;
+    }
+    if (!editingCourse && !assignedBranches.length) {
+      setError("Select at least one branch for this shared subject.");
       return;
     }
     if (cleanCode.length > 16) {
@@ -344,9 +353,7 @@ export default function CourseLibrary({
       const { data: authData, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!authData.user) throw new Error("Sign in again to save this course.");
-      if (editingCourse && editingCourse.owner_id !== authData.user.id) {
-        throw new Error("Only the course owner can edit this course.");
-      }
+      if (!isSuperAdmin) throw new Error("Only an active Super Admin can manage shared subjects.");
 
       const fields = {
         owner_id: authData.user.id,
@@ -355,23 +362,22 @@ export default function CourseLibrary({
         code: cleanCode,
         course_code: cleanCode,
         semester: Number(semesterValue),
-        branch_id: academicProfile.branch_id || null,
-        academic_cycle_id: academicProfile.academic_cycle_id || null,
-        year_level: academicProfile.year_level ? Number(academicProfile.year_level) : null,
+        branch_id: null,
+        academic_cycle_id: null,
+        year_level: null,
         description: description.trim(),
       };
 
+      let savedCourse;
       if (editingCourse) {
         const { data, error: updateError } = await supabase
           .from("courses")
           .update(fields)
           .eq("id", editingCourse.id)
-          .eq("owner_id", authData.user.id)
           .select(COURSE_SELECT_COLUMNS)
           .single();
         if (updateError) throw updateError;
-        setCourses((current) => current.map((course) => course.id === data.id ? normalizeCourse({ ...course, ...data }) : course));
-        notify?.("Course changes saved.");
+        savedCourse = data;
       } else {
         const { data, error: insertError } = await supabase
           .from("courses")
@@ -379,9 +385,18 @@ export default function CourseLibrary({
           .select(COURSE_SELECT_COLUMNS)
           .single();
         if (insertError) throw insertError;
-        setCourses((current) => [normalizeCourse(data), ...current]);
-        notify?.("Course created.");
+        savedCourse = data;
       }
+      const { error: mappingError } = await supabase.rpc("set_course_branch_visibility", {
+        p_course_id: savedCourse.id,
+        p_branch_ids: assignedBranches,
+      });
+      if (mappingError) throw mappingError;
+      const mappingRows = assignedBranches.map((branchId) => ({ branch_id: branchId }));
+      setCourses((current) => editingCourse
+        ? current.map((course) => course.id === savedCourse.id ? normalizeCourse({ ...course, ...savedCourse, course_branch_visibility: mappingRows }) : course)
+        : [normalizeCourse({ ...savedCourse, course_branch_visibility: mappingRows }), ...current]);
+      notify?.(editingCourse ? "Shared subject and branch visibility saved." : "Shared subject created.");
       closeForm();
     } catch (saveError) {
       console.error("Course save failed:", saveError);
@@ -400,12 +415,11 @@ export default function CourseLibrary({
       const { data: authData, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!authData.user) throw new Error("Sign in again to delete this course.");
-      if (course.owner_id !== authData.user.id) throw new Error("Only the course owner can delete this course.");
+      if (!isSuperAdmin) throw new Error("Only an active Super Admin can delete shared subjects.");
       const { error: deleteError, count } = await supabase
         .from("courses")
         .delete({ count: "exact" })
-        .eq("id", course.id)
-        .eq("owner_id", authData.user.id);
+        .eq("id", course.id);
       if (deleteError) throw deleteError;
       if (count === 0) throw new Error("Course was not deleted. It may no longer belong to your account.");
       setCourses((current) => current.filter((item) => item.id !== course.id));
@@ -428,6 +442,24 @@ export default function CourseLibrary({
 
   const selectedCourse = courses.find((course) => String(course.id) === String(selectedCourseId));
 
+  useEffect(() => {
+    if (!selectedCourse || !supabase) { setCurriculum([]); setCurriculumLoading(false); return; }
+    let active = true;
+    async function loadCurriculum() {
+      setCurriculumError("");
+      setCurriculumLoading(true);
+      const { data, error: queryError } = await supabase.from("academic_units")
+        .select("id, course_id, title, position, academic_chapters(id, unit_id, title, position, academic_topics(id, chapter_id, title, position))")
+        .eq("course_id", selectedCourse.id).is("archived_at", null).order("position");
+      if (!active) return;
+      if (queryError) { setCurriculum([]); setCurriculumError("Shared units and topics could not be loaded. Check the curriculum migration and access policies."); }
+      else setCurriculum(data || []);
+      setCurriculumLoading(false);
+    }
+    loadCurriculum();
+    return () => { active = false; };
+  }, [selectedCourse?.id, refreshVersion]);
+
   if (selectedCourse) {
     const courseMaterials = materials.filter((item) => String(item.courseId || item.course_id || "") === String(selectedCourse.id));
     const linkedTasks = tasks.filter((task) => String(task.courseId || "") === String(selectedCourse.id));
@@ -437,7 +469,7 @@ export default function CourseLibrary({
       <section className={styles.panel}>
         <div className={styles.detailTop}>
           <button type="button" className={styles.back} onClick={() => setSelectedCourseId("")}><ArrowLeft size={15} /> All courses</button>
-          {selectedCourse.owner_id === currentUserId && <div className={styles.detailActions}>
+          {isSuperAdmin && <div className={styles.detailActions}>
             <button type="button" className={styles.secondaryAction} onClick={() => startEdit(selectedCourse)}><Edit3 size={14} /> Edit course</button>
             <button type="button" className={styles.dangerAction} onClick={() => setDeleteTarget(selectedCourse)}><Trash2 size={14} /> Delete</button>
           </div>}
@@ -447,6 +479,12 @@ export default function CourseLibrary({
           <div><p>COURSE DETAILS</p><h2>{selectedCourse.name}</h2><span>{selectedCourse.code || "No course code"} · Semester {selectedCourse.semester}</span></div>
         </div>
         {selectedCourse.description && <p className={styles.detailDescription}>{selectedCourse.description}</p>}
+        {curriculumError && <p className={styles.loadError} role="alert">{curriculumError}</p>}
+        {curriculumLoading && <p className={styles.academicNote} role="status">Loading shared units, chapters and topics…</p>}
+        {curriculum.length > 0 && <section className={styles.sharedCurriculum} aria-label="Shared units and topics">
+          <h3>Shared curriculum</h3>
+          {[...curriculum].sort((a, b) => a.position - b.position).map((unit) => <div key={unit.id}><h4>{unit.title}</h4>{[...(unit.academic_chapters || [])].sort((a, b) => a.position - b.position).map((chapter) => <div key={chapter.id}><strong>{chapter.title}</strong><ul>{[...(chapter.academic_topics || [])].sort((a, b) => a.position - b.position).map((topic) => <li key={topic.id}>{topic.title}</li>)}</ul></div>)}</div>)}
+        </section>}
         <div className={styles.detailStats}>
           <div><strong>{courseMaterials.length}</strong><span>Linked materials</span></div>
           <div><strong>{linkedTasks.length}</strong><span>Tasks</span></div>
@@ -496,11 +534,12 @@ export default function CourseLibrary({
     return (
       <form className={styles.addForm} onSubmit={saveCourse}>
         <div className={styles.formHeading}><h3>{editingCourse ? "Edit subject" : "Add a subject"}</h3><button type="button" onClick={closeForm} aria-label="Close course form"><X size={16} /></button></div>
-        <p className={styles.academicNote}>{academicProfile.branch_id ? "This subject will be categorized under your saved degree, branch, academic year and year." : "Set your academic allocation above to categorize this subject by branch and year."}</p>
+        <p className={styles.academicNote}>One subject record is shared with every selected branch. Semester does not limit visibility.</p>
         <div className={styles.formGrid}>
           <label>Course name<input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Database Management Systems" maxLength={100} required /></label>
           <label>Course code <span>(optional)</span><input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Generated from course name when blank" maxLength={16} /></label>
           <label>Semester<select value={semesterValue} onChange={(event) => setSemesterValue(event.target.value)}>{Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={index + 1}>Semester {index + 1}</option>)}</select></label>
+          <fieldset className={styles.descriptionField}><legend>Visible to branches</legend>{academicCatalog.branches.map((branch) => <label key={branch.id}><input type="checkbox" checked={assignedBranches.includes(String(branch.id))} onChange={(event) => setAssignedBranches((current) => event.target.checked ? [...new Set([...current, String(branch.id)])] : current.filter((id) => id !== String(branch.id)))} /> {branch.name}</label>)}</fieldset>
           <label className={styles.descriptionField}>Description <span>(optional)</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What will you study in this course?" maxLength={500} rows={3} /></label>
         </div>
         {error && <p className={styles.formError} role="alert">{error}</p>}
@@ -514,13 +553,10 @@ export default function CourseLibrary({
       <div className={styles.header}>
         <div><h2>{compact ? "College courses" : "Course library"}</h2><p>{compact ? "Browse shared subjects and semesters" : "Browse college subjects; create and manage your own courses."}</p></div>
         <div className={styles.controls}>
-          {!compact && <>
+          {!compact && isSuperAdmin && <>
             <select value={branchFilter} onChange={(event) => setBranchFilter(event.target.value)} aria-label="Filter by branch"><option value="all">All branches</option>{academicCatalog.branches.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
-            <select value={cycleFilter} onChange={(event) => setCycleFilter(event.target.value)} aria-label="Filter by academic year"><option value="all">All academic years</option>{academicCatalog.cycles.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
-            <select value={yearFilter} onChange={(event) => setYearFilter(event.target.value)} aria-label="Filter by year"><option value="all">All years</option>{Array.from({ length: 6 }, (_, index) => <option key={index + 1} value={String(index + 1)}>Year {index + 1}</option>)}</select>
-            <select value={semester} onChange={(event) => setSemester(event.target.value)} aria-label="Filter by semester"><option value="all">All semesters</option>{Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={String(index + 1)}>Semester {index + 1}</option>)}</select>
           </>}
-          <button type="button" onClick={formOpen ? closeForm : startCreate} className={styles.add}><Plus size={15} /><span>{formOpen ? "Close" : "Add subject"}</span></button>
+          {isSuperAdmin && <button type="button" onClick={formOpen ? closeForm : startCreate} className={styles.add}><Plus size={15} /><span>{formOpen ? "Close" : "Add subject"}</span></button>}
           {compact && <button type="button" className={styles.viewAll} onClick={onViewAll}>View all</button>}
           {!compact && <button type="button" className={styles.refresh} onClick={() => setRefreshVersion((value) => value + 1)} disabled={loading} aria-label="Refresh courses"><RotateCw size={15} /></button>}
         </div>
@@ -536,12 +572,12 @@ export default function CourseLibrary({
           const courseMaterials = materials.filter((item) => String(item.courseId || item.course_id || "") === String(course.id)).length;
           const courseTasks = tasks.filter((task) => String(task.courseId || "") === String(course.id));
           const progress = courseTasks.length ? Math.round(courseTasks.filter((task) => task.completed).length / courseTasks.length * 100) : 0;
-          const branchName = academicCatalog.branches.find((item) => item.id === course.branch_id)?.name;
+          const branchName = course.visibleBranchIds?.map((id) => academicCatalog.branches.find((item) => String(item.id) === String(id))?.name).filter(Boolean).join(", ");
           const cycleLabel = academicCatalog.cycles.find((item) => item.id === course.academic_cycle_id)?.label;
-          return <CourseCard key={course.id} course={{ ...course, branchName, cycleLabel, materials: courseMaterials, progress, progressTasks: courseTasks.length, chapterProgress: chapterProgressByCourse[course.id] || { completed: 0, total: 0 } }} canManage={course.owner_id === currentUserId} onOpen={() => onOpenCourse ? onOpenCourse(course.id) : setSelectedCourseId(course.id)} onDelete={setDeleteTarget} />;
+          return <CourseCard key={course.id} course={{ ...course, branchName, cycleLabel, materials: courseMaterials, progress, progressTasks: courseTasks.length, chapterProgress: chapterProgressByCourse[course.id] || { completed: 0, total: 0 } }} canManage={isSuperAdmin} onEdit={() => startEdit(course)} onOpen={() => onOpenCourse ? onOpenCourse(course.id) : setSelectedCourseId(course.id)} onDelete={setDeleteTarget} />;
         })}
       </div>
-      {!loading && !error && !visible.length && <EmptyState icon={BookOpen} title={query ? "No matching courses" : "No courses yet"} description={query ? "Try another search." : "Create your first course to organize materials, assignments, and progress."} />}
+      {!loading && !error && !visible.length && <EmptyState icon={BookOpen} title={query ? "No matching subjects" : "No subjects available"} description={query ? "Try another search." : "Subjects assigned to your academic branch will appear here."} />}
       {deleteTarget && <div className={styles.confirmBox} role="alertdialog" aria-modal="true" aria-labelledby="delete-course-title"><div><h3 id="delete-course-title">Delete {deleteTarget.name}?</h3><p>Uploaded files and material records stay in your account. Their course link will be cleared.</p></div><button type="button" className={styles.dangerAction} onClick={confirmDeleteCourse} disabled={loading}>{loading ? "Deleting…" : "Delete course"}</button><button type="button" className={styles.secondaryAction} onClick={() => setDeleteTarget(null)} disabled={loading}>Cancel</button></div>}
     </section>
   );

@@ -40,6 +40,7 @@ import { LegalPage, PublicLanding } from "./components/PublicSite.jsx";
 import { usePersistentState } from "./hooks/usePersistentState.js";
 import { supabase, STORAGE_BUCKETS } from "./lib/supabase.js";
 import { fetchPlatformRole, getWorkspaceAccess } from "./lib/workspaceAccess.js";
+import { visibleCoursesForWorkspace, visibleMaterialsForWorkspace, courseVisibleToBranch } from "./lib/courseVisibility.js";
 import {
   initialCourses,
   initialMaterials,
@@ -485,7 +486,7 @@ async function handleLogout() {
     const term = query.trim().toLowerCase();
     if (term.length < 2) return [];
     return [
-      ...courses.filter((item) => (item.owner_id === session?.userId || item.branch_id === academicProfile?.branch_id)
+      ...courses.filter((item) => (platformRole === "super_admin" || platformRole === "teacher" || item.owner_id === session?.userId || courseVisibleToBranch(item, academicProfile?.branch_id))
         && `${item.name || item.title} ${item.code || item.course_code || ""}`.toLowerCase().includes(term))
         .map((item) => ({ id: `course-${item.id}`, label: item.name || item.title, detail: "Course", section: "Courses", courseId: item.id })),
       ...materials.filter((item) => `${item.name} ${item.subject || ""}`.toLowerCase().includes(term))
@@ -493,7 +494,7 @@ async function handleLogout() {
       ...tasks.filter((item) => `${item.title} ${item.description || ""}`.toLowerCase().includes(term))
         .map((item) => ({ id: `task-${item.id}`, label: item.title, detail: item.completed ? "Completed task" : "Task", section: "Tasks" })),
     ].slice(0, 8);
-  }, [query, courses, materials, tasks, session?.userId, academicProfile?.branch_id]);
+  }, [query, courses, materials, tasks, session?.userId, academicProfile?.branch_id, platformRole]);
 
   const selectSearchResult = useCallback((result) => {
     if (result.courseId) setSelectedCourseId(result.courseId);
@@ -517,14 +518,20 @@ async function handleLogout() {
     setActive,
     onLoadStatusChange: setMaterialLoadStatus,
     onCourseLoadStatusChange: setCourseLoadStatus,
+    platformRole,
   };
 
-  const scopedCourses = useMemo(() => courses.filter((course) => {
-    if (platformRole === "super_admin") return true;
-    if (course.owner_id && course.owner_id === session?.userId) return true;
-    return Boolean(academicProfile?.branch_id && course.branch_id === academicProfile.branch_id);
+  const scopedCourses = useMemo(() => visibleCoursesForWorkspace(courses, {
+    role: platformRole,
+    userId: session?.userId,
+    branchId: academicProfile?.branch_id,
   }), [courses, academicProfile?.branch_id, session?.userId, platformRole]);
-  const academicShared = { ...shared, courses: scopedCourses };
+  const scopedMaterials = useMemo(() => visibleMaterialsForWorkspace(materials, scopedCourses, {
+    role: platformRole,
+    userId: session?.userId,
+    branchId: academicProfile?.branch_id,
+  }), [materials, scopedCourses, platformRole, session?.userId, academicProfile?.branch_id]);
+  const academicShared = { ...shared, courses: scopedCourses, materials: scopedMaterials };
 
   const visibleNavItems = platformRole === "super_admin"
     ? [...navItems, { id: "Admin", label: "Super Admin", icon: ShieldCheck }]
@@ -615,12 +622,12 @@ async function handleLogout() {
                 </p>
               </div>
 
-              <button
+              {platformRole === "super_admin" && <button
                 className={styles.primaryButton}
                 onClick={() => { setCreateCourseRequested(true); setActive("Courses"); }}
               >
                 ＋ Add a course
-              </button>
+              </button>}
             </section>
 
             <section className={styles.stats} aria-label="Study overview">
@@ -669,6 +676,7 @@ async function handleLogout() {
             <div className={styles.dashboardGrid}>
               <CourseLibrary
                 {...academicShared}
+                platformRole={platformRole}
                 compact
                 onOpenCourse={openCourse}
                 onViewAll={() => setActive("Courses")}
@@ -690,13 +698,13 @@ async function handleLogout() {
                 </div>
 
                 <div className={styles.quickActions} aria-label="Quick actions">
-                  <button type="button" onClick={() => { setCreateCourseRequested(true); setActive("Courses"); }}>Create course</button>
+                  {platformRole === "super_admin" && <button type="button" onClick={() => { setCreateCourseRequested(true); setActive("Courses"); }}>Create subject</button>}
                   <button type="button" onClick={() => requestUpload()}>Upload material</button>
                   <button type="button" onClick={() => setActive("Tasks")}>View assignments</button>
                 </div>
 
                 <TasksPanel {...shared} compact onViewAll={() => setActive("Tasks")} />
-                <MaterialsPanel {...shared} compact onOpenCourses={() => setActive("Materials")} />
+                <MaterialsPanel {...academicShared} compact onOpenCourses={() => setActive("Materials")} />
 
                 <section className={styles.activity} aria-labelledby="activity-title">
                   <div className={styles.activityHeading}><div><h2 id="activity-title">Recent activity</h2><p>Updates from your workspace</p></div></div>
@@ -709,6 +717,7 @@ async function handleLogout() {
 
         {active === "Courses" && <AcademicHub
           {...academicShared}
+          platformRole={platformRole}
           onAcademicProfileChange={setAcademicProfile}
           materials={materials}
           initialSelectedCourseId={selectedCourseId}
@@ -720,9 +729,10 @@ async function handleLogout() {
         />}
 
         {active === "Materials" && <MaterialsPanel
-          {...shared}
+          {...academicShared}
           courses={scopedCourses}
           setCourses={setCourses}
+          platformRole={platformRole}
           initialCourseId={uploadMaterialRequest.courseId}
           autoOpenUpload={uploadMaterialRequest.open}
           onUploadFormOpened={clearUploadRequest}
