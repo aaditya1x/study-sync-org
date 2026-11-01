@@ -11,11 +11,12 @@ export function parseSyllabusText(rawText, course) {
   const lines = String(rawText || "").replace(/\f/g, "\n").split(/\r?\n/)
     .map((line) => ({ indent: line.match(/^\s*/)?.[0].length || 0, text: line.replace(/[\u0000-\u001f\u007f]/g, " ").trim() }))
     .filter(({ text }) => text);
-  const unitPattern = /^(?:UNIT|MODULE)\s+(XII|XI|IX|VIII|VII|VI|V|IV|III|II|I|\d{1,2})\s*[:.\-–—]?\s*(.*)$/i;
+  const unitPattern = /^(?:UNIT|MODULE)\s*(?:[-:–—]\s*)?(XII|XI|IX|VIII|VII|VI|V|IV|III|II|I|\d{1,2})\b\s*(?:[:.\-–—]\s*)?(.*)$/i;
   const units = [];
   let current = null;
   for (const row of lines) {
     const line = row.text;
+    if (/^-{2,}\s*page\s*\(\d+\)\s*break\s*-{2,}$/i.test(line)) continue;
     const match = line.match(unitPattern);
     if (match) {
       const number = unitNumber(match[1]);
@@ -39,8 +40,9 @@ export function parseSyllabusText(rawText, course) {
   }
   const verifiedUnits = units.filter((unit) => unit.topics.length);
   const normalizedText = String(rawText || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const canonicalSubject = course?.name || course?.title || course?.code || course?.course_code;
-  const subjectTerms = canonicalSubject ? [String(canonicalSubject).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()] : [];
+  const subjectTerms = [course?.name || course?.title, course?.code || course?.course_code]
+    .filter((term) => typeof term === "string" && term.trim())
+    .map((term) => String(term).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim());
   return {
     subject_name: course?.name || course?.title || "",
     subject_found_in_pdf: subjectTerms.some((term) => term && normalizedText.includes(term)),

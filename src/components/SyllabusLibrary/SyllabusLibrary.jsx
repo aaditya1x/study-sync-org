@@ -274,7 +274,8 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
         {source.processing_error && <p className={styles.importError}>{source.processing_error}</p>}
         {source.status === "pending_review" && <>
           {source.extracted_outline?.subject_found_in_pdf !== true && <p className={styles.importError}>The PDF content did not match the selected subject. It cannot be published.</p>}
-          <ul>{(source.extracted_outline?.units || []).map((unit) => <li key={`${source.id}-${unit.number}`}><strong>Unit {unit.number}: {unit.title}</strong><ul>{unit.topics.map((topic, index) => <li key={`${unit.number}-${index}`}>{topic.title}{topic.subtopics?.length ? ` · ${topic.subtopics.join("; ")}` : ""}</li>)}</ul></li>)}</ul>
+          <p>{source.extracted_outline?.units?.length || 0} units · {(source.extracted_outline?.units || []).reduce((total, unit) => total + (unit.topics?.length || 0), 0)} topics detected. Review the extracted outline before verifying.</p>
+          <ul>{(source.extracted_outline?.units || []).map((unit) => <li key={`${source.id}-${unit.number}`}><strong>Unit {unit.number}: {unit.title} ({unit.topics?.length || 0} topics)</strong><ul>{(unit.topics || []).map((topic, index) => <li key={`${unit.number}-${index}`}>{topic.title}{topic.subtopics?.length ? ` · ${topic.subtopics.join("; ")}` : ""}</li>)}</ul></li>)}</ul>
           <button type="button" onClick={() => publishSyllabus(source.id)} disabled={importBusy || source.extracted_outline?.subject_found_in_pdf !== true}><CheckCircle2 size={15}/> Verify and publish</button>
         </>}
       </article>)}
