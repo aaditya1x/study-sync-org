@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { logApiFailure, missingServerEnv, readServerEnv, reportMissingServerEnv } from "../server/apiDiagnostics.js";
 import { verifyActiveSuperAdmin } from "../server/teacherApprovalApi.js";
-import { extractSyllabusPdf } from "../server/syllabusPdf.js";
+import { extractSyllabusPdf, syllabusExtractionIssue, syllabusSourceKey } from "../server/syllabusPdf.js";
 
 const url = readServerEnv("SUPABASE_URL", "VITE_SUPABASE_URL");
 const publishableKey = readServerEnv("SUPABASE_PUBLISHABLE_KEY", "SUPABASE_ANON_KEY", "VITE_SUPABASE_PUBLISHABLE_KEY", "VITE_SUPABASE_ANON_KEY");
@@ -17,8 +17,6 @@ function safeTitle(value, max = 200) {
   if (!title || title.length > max) throw httpError("The extracted syllabus contains an invalid title.");
   return title;
 }
-function safeKey(value) { return value.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 120); }
-
 async function upsertOutlineNode(table, key, parentColumn, parentId, title, position, sourceId) {
   const { data: existing, error: lookupError } = await admin.from(table).select("id")
     .eq("syllabus_source_key", key).maybeSingle();
@@ -46,7 +44,8 @@ async function upsertOutlineNode(table, key, parentColumn, parentId, title, posi
 
 async function publishSource(source) {
   const outline = source.extracted_outline;
-  if (!outline || !Array.isArray(outline.units) || !outline.units.length) throw httpError("This source has no extracted topics to publish.");
+  const outlineIssue = syllabusExtractionIssue(outline, { selectedCourseId: source.course_id, sourceCourseId: source.course_id });
+  if (outlineIssue) throw httpError(outlineIssue, 422);
   const { data: course, error: courseError } = await admin.from("courses").select("id,name,title").eq("id", source.course_id).maybeSingle();
   if (courseError) throw courseError;
   if (!course) throw httpError("The selected subject no longer exists.", 404);
@@ -67,12 +66,12 @@ async function publishSource(source) {
     const topics = Array.isArray(unit.topics) ? unit.topics : [];
     for (let ti = 0; ti < topics.length; ti += 1) {
       const topicTitle = safeTitle(topics[ti].title);
-      const topicKey = `${chapterKey}:topic:${safeKey(topicTitle)}`;
+      const topicKey = `${chapterKey}:topic:${syllabusSourceKey(topicTitle)}`;
       const topicId = await upsertOutlineNode("academic_topics", topicKey, "chapter_id", chapterId, topicTitle, ti + 1, source.id);
       const subtopics = Array.isArray(topics[ti].subtopics) ? topics[ti].subtopics : [];
       for (let si = 0; si < subtopics.length; si += 1) {
         const subTitle = safeTitle(subtopics[si]);
-        const subKey = `${topicKey}:subtopic:${safeKey(subTitle)}`;
+        const subKey = `${topicKey}:subtopic:${syllabusSourceKey(subTitle)}`;
         const { data: child, error: childError } = await admin.from("academic_topics").select("id").eq("syllabus_source_key", subKey).maybeSingle();
         if (childError) throw childError;
         const childValues = { chapter_id: chapterId, parent_topic_id: topicId, title: subTitle, position: si + 1, archived_at: null, syllabus_source_id: source.id, syllabus_source_key: subKey, updated_at: new Date().toISOString() };
@@ -124,17 +123,25 @@ export default async function handler(req, res) {
       const buffer = Buffer.from(await blob.arrayBuffer());
       if (buffer.subarray(0, 5).toString() !== "%PDF-") throw httpError("The selected file is not a valid PDF.", 400);
       let outline;
+      let extractionFailed = false;
       try { outline = await extractSyllabusPdf(buffer, course); }
-      catch { outline = { subject_name: course.name || course.title || "", subject_found_in_pdf: false, units: [] }; }
-      const hasTopics = outline.units.some((unit) => unit.topics.length);
-      const status = hasTopics ? "pending_review" : "failed";
+      catch {
+        extractionFailed = true;
+        outline = { subject_name: course.name || course.title || "", subject_found_in_pdf: false, units: [] };
+      }
+      const processingError = syllabusExtractionIssue(outline, {
+        selectedCourseId: courseId,
+        sourceCourseId: course.id,
+        extractionFailed,
+      });
+      const status = processingError ? "failed" : "pending_review";
       const { data: source, error: insertError } = await admin.from("academic_syllabus_sources").insert({
         course_id: courseId, storage_path: storagePath, original_filename: safeTitle(filename || "syllabus.pdf", 255),
         file_size: blob.size, status, extracted_outline: outline, uploaded_by: user.id,
-        processing_error: hasTopics ? null : "No readable unit and topic outline was found in this PDF. The original PDF is retained.",
-      }).select("id,status,extracted_outline,processing_error").single();
+        processing_error: processingError,
+      }).select("id,course_id,status,extracted_outline,processing_error").single();
       if (insertError) throw insertError;
-      if (!hasTopics) return res.status(422).json({ error: source.processing_error, source });
+      if (processingError) return res.status(422).json({ error: processingError, source });
       return res.status(200).json({ source });
     }
     if (action === "list") {

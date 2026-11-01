@@ -39,12 +39,59 @@ export function parseSyllabusText(rawText, course) {
   }
   const verifiedUnits = units.filter((unit) => unit.topics.length);
   const normalizedText = String(rawText || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const subjectTerms = [course?.name, course?.title, course?.code, course?.course_code].filter(Boolean).map((term) => String(term).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim());
+  const canonicalSubject = course?.name || course?.title || course?.code || course?.course_code;
+  const subjectTerms = canonicalSubject ? [String(canonicalSubject).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()] : [];
   return {
     subject_name: course?.name || course?.title || "",
     subject_found_in_pdf: subjectTerms.some((term) => term && normalizedText.includes(term)),
     units: verifiedUnits,
   };
+}
+
+export function syllabusExtractionIssue(outline, {
+  selectedCourseId,
+  sourceCourseId = selectedCourseId,
+  extractionFailed = false,
+} = {}) {
+  if (typeof selectedCourseId !== "string" || !selectedCourseId
+    || typeof sourceCourseId !== "string" || sourceCourseId !== selectedCourseId) {
+    return "The uploaded PDF is not associated with the selected subject. Select the subject again and re-upload.";
+  }
+  if (extractionFailed) return "PDF text extraction failed. Use a readable, text-based PDF and try again.";
+  if (!outline || typeof outline !== "object" || Array.isArray(outline)) {
+    return "The PDF did not produce readable syllabus content.";
+  }
+  if (outline.subject_found_in_pdf !== true) {
+    return "The PDF content does not match the selected subject. No syllabus topics were imported.";
+  }
+  if (!Array.isArray(outline.units) || outline.units.length === 0) {
+    return "No readable syllabus units and topics were found in this PDF.";
+  }
+  for (const unit of outline.units) {
+    if (!unit || typeof unit !== "object" || !Number.isInteger(Number(unit.number))
+      || Number(unit.number) < 1 || Number(unit.number) > 24
+      || typeof unit.title !== "string" || !unit.title.trim()
+      || !Array.isArray(unit.topics) || unit.topics.length === 0) {
+      return "The extracted syllabus contains incomplete unit metadata. No syllabus topics were imported.";
+    }
+    for (const topic of unit.topics) {
+      if (!topic || typeof topic !== "object" || typeof topic.title !== "string" || topic.title.trim().length < 3
+        || (topic.subtopics !== undefined && (!Array.isArray(topic.subtopics)
+          || topic.subtopics.some((subtopic) => typeof subtopic !== "string" || subtopic.trim().length < 3)))) {
+        return "The extracted syllabus contains missing or invalid topic metadata. No syllabus topics were imported.";
+      }
+    }
+  }
+  return null;
+}
+
+export function syllabusSourceKey(value) {
+  // Extracted PDF metadata is untrusted: do not call replace() on it until
+  // the value has been normalized to a string and checked for emptiness.
+  const safeValue = typeof value === "string" ? value.trim() : "";
+  const key = safeValue.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 120);
+  if (!key) throw Object.assign(new Error("The extracted syllabus contains a missing or invalid topic title."), { status: 422 });
+  return key;
 }
 
 export function extractPdfText(buffer) {

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpenCheck, CheckCircle2, ExternalLink, FileText, GraduationCap, Search, UploadCloud } from "lucide-react";
 import { supabase } from "../../lib/supabase.js";
+import { sourceMatchesSelectedCourse, syllabusSourcesForCourse } from "../../lib/syllabusImport.js";
 import styles from "./SyllabusLibrary.module.css";
 
 const SUBJECTS = [
@@ -38,6 +39,7 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
   const [importSources, setImportSources] = useState([]);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [openingSource, setOpeningSource] = useState("");
+  const sourceRequestId = useRef(0);
   const isSuperAdmin = platformRole === "super_admin";
 
   const subjectList = useMemo(() => {
@@ -66,15 +68,23 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
     return result;
   }
 
-  async function refreshSyllabusSources(courseId = "") {
+  async function refreshSyllabusSources(courseId = importCourseId) {
     if (!isSuperAdmin || !supabase) return;
+    const requestId = ++sourceRequestId.current;
+    if (!courseId) { setImportSources([]); return; }
     try {
       const result = await syllabusRequest({ action: "list", ...(courseId ? { course_id: courseId } : {}) });
-      setImportSources(result.sources || []);
-    } catch (failure) { setImportError(failure.message || "Could not load syllabus review items."); }
+      if (requestId === sourceRequestId.current) setImportSources(syllabusSourcesForCourse(result.sources, courseId));
+    } catch (failure) {
+      if (requestId === sourceRequestId.current) setImportError(failure.message || "Could not load syllabus review items.");
+    }
   }
 
-  useEffect(() => { refreshSyllabusSources(); }, [isSuperAdmin, courses]);
+  useEffect(() => {
+    setImportSources([]);
+    void refreshSyllabusSources(importCourseId);
+    return () => { sourceRequestId.current += 1; };
+  }, [isSuperAdmin, importCourseId, courses]);
 
   useEffect(() => setSearch(query), [query]);
   useEffect(() => {
@@ -134,21 +144,23 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
     if (importFile.size < 1 || importFile.size > 25 * 1024 * 1024 || (importFile.type && importFile.type !== "application/pdf") || !importFile.name.toLowerCase().endsWith(".pdf")) {
       setImportError("Select a valid PDF file up to 25 MB."); return;
     }
+    const selectedCourseId = importCourseId;
     setImportBusy(true);
     let storagePath = "";
     try {
       const { data: auth, error: authError } = await supabase.auth.getUser();
       if (authError || !auth.user) throw new Error("Sign in again before uploading a syllabus.");
-      storagePath = `syllabus/${auth.user.id}/${importCourseId}/${crypto.randomUUID()}.pdf`;
+      storagePath = `syllabus/${auth.user.id}/${selectedCourseId}/${crypto.randomUUID()}.pdf`;
       const { error: uploadError } = await supabase.storage.from("academic-syllabi").upload(storagePath, importFile, { contentType: "application/pdf", upsert: false });
       if (uploadError) throw uploadError;
-      const result = await syllabusRequest({ action: "process", course_id: importCourseId, storage_path: storagePath, filename: importFile.name, file_size: importFile.size });
-      setImportSources((current) => [result.source, ...current.filter((source) => source.id !== result.source.id)]);
+      const result = await syllabusRequest({ action: "process", course_id: selectedCourseId, storage_path: storagePath, filename: importFile.name, file_size: importFile.size });
+      if (!sourceMatchesSelectedCourse(result.source, selectedCourseId)) throw new Error("The processed syllabus was not associated with the selected subject. No preview was added.");
+      if (importCourseId === selectedCourseId) setImportSources((current) => [result.source, ...syllabusSourcesForCourse(current, selectedCourseId).filter((source) => source.id !== result.source.id)]);
       setImportFile(null);
       form.reset();
     } catch (failure) {
       setImportError(failure.message || "The syllabus could not be processed. An uploaded original remains in private Storage if upload completed.");
-      await refreshSyllabusSources(importCourseId);
+      await refreshSyllabusSources(selectedCourseId);
     } finally { setImportBusy(false); }
   }
 
@@ -251,19 +263,19 @@ export default function SyllabusLibrary({ query = "", courses = [], materials = 
     {isSuperAdmin ? <section className={styles.importPanel}>
       <div><h2><UploadCloud size={17}/> Import syllabus PDF</h2><p>Upload a text-based PDF for a subject. Extracted entries remain pending until you review and publish them.</p></div>
       <form onSubmit={importSyllabus}>
-        <label>Subject<select value={importCourseId} onChange={(event) => setImportCourseId(event.target.value)} required><option value="">Select subject</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name || course.title || "Untitled subject"}{course.code || course.course_code ? ` · ${course.code || course.course_code}` : ""}</option>)}</select></label>
-        <label>Source PDF<input type="file" accept="application/pdf,.pdf" onChange={(event) => setImportFile(event.target.files?.[0] || null)} required/></label>
+        <label>Subject<select value={importCourseId} onChange={(event) => setImportCourseId(event.target.value)} disabled={importBusy} required><option value="">Select subject</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name || course.title || "Untitled subject"}{course.code || course.course_code ? ` · ${course.code || course.course_code}` : ""}</option>)}</select></label>
+        <label>Source PDF<input type="file" accept="application/pdf,.pdf" onChange={(event) => setImportFile(event.target.files?.[0] || null)} disabled={importBusy} required/></label>
         <button type="submit" disabled={importBusy || !importFile || !importCourseId}>{importBusy ? "Processing…" : "Upload and extract"}</button>
       </form>
       {importError && <p className={styles.importError} role="alert">{importError}</p>}
-      {importSources.filter((source) => source.status !== "verified").map((source) => <article className={styles.pendingImport} key={source.id}>
+      {syllabusSourcesForCourse(importSources, importCourseId).filter((source) => source.status !== "verified").map((source) => <article className={styles.pendingImport} key={source.id}>
         <div><strong>{source.original_filename}</strong><span>{courses.find((course) => course.id === source.course_id)?.name || "Subject"} · {source.status === "pending_review" ? "Pending Super Admin verification" : "Processing failed; source retained"}</span></div>
         <button type="button" onClick={() => openSyllabusSource(source)} disabled={openingSource === source.id}>{openingSource === source.id ? "Opening…" : "Open source PDF"}</button>
         {source.processing_error && <p className={styles.importError}>{source.processing_error}</p>}
         {source.status === "pending_review" && <>
-          {!source.extracted_outline?.subject_found_in_pdf && <p className={styles.importError}>The PDF text did not clearly contain the selected subject name. Confirm this source before publishing.</p>}
+          {source.extracted_outline?.subject_found_in_pdf !== true && <p className={styles.importError}>The PDF content did not match the selected subject. It cannot be published.</p>}
           <ul>{(source.extracted_outline?.units || []).map((unit) => <li key={`${source.id}-${unit.number}`}><strong>Unit {unit.number}: {unit.title}</strong><ul>{unit.topics.map((topic, index) => <li key={`${unit.number}-${index}`}>{topic.title}{topic.subtopics?.length ? ` · ${topic.subtopics.join("; ")}` : ""}</li>)}</ul></li>)}</ul>
-          <button type="button" onClick={() => publishSyllabus(source.id)} disabled={importBusy}><CheckCircle2 size={15}/> Verify and publish</button>
+          <button type="button" onClick={() => publishSyllabus(source.id)} disabled={importBusy || source.extracted_outline?.subject_found_in_pdf !== true}><CheckCircle2 size={15}/> Verify and publish</button>
         </>}
       </article>)}
     </section> : <div className={styles.notice}>Curriculum topics are imported from source PDFs and displayed after an authorized Super Admin verifies the extracted outline. No syllabus topics are generated or invented.</div>}

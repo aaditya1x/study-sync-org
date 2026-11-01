@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { parseSyllabusText } from "../server/syllabusPdf.js";
+import { parseSyllabusText, syllabusExtractionIssue, syllabusSourceKey } from "../server/syllabusPdf.js";
+import { sourceMatchesSelectedCourse, syllabusSourcesForCourse } from "../src/lib/syllabusImport.js";
 
 test("syllabus parser extracts only explicit unit and topic lines and matches subject evidence", () => {
   const outline = parseSyllabusText([
@@ -24,6 +25,52 @@ test("parser reports no usable syllabus outline for unreadable or non-outline te
   assert.deepEqual(parseSyllabusText("", { name: "Data Structures" }).units, []);
   assert.deepEqual(parseSyllabusText("This document has readable text but no explicit unit headings.", { name: "Data Structures" }).units, []);
   assert.equal(parseSyllabusText("UNIT I: Linear Data Structures\nArrays", { name: "Chemistry" }).subject_found_in_pdf, false);
+});
+
+test("undefined PDF text and course metadata fail safely with a useful empty-content error", () => {
+  const outline = parseSyllabusText(undefined, undefined);
+  assert.equal(outline.subject_found_in_pdf, false);
+  assert.deepEqual(outline.units, []);
+  assert.match(syllabusExtractionIssue(outline, { selectedCourseId: "course-a" }), /does not match the selected subject/);
+  assert.match(syllabusExtractionIssue(undefined, { selectedCourseId: "course-a" }), /did not produce readable syllabus content/);
+  assert.throws(() => syllabusSourceKey(undefined), { status: 422, message: /missing or invalid topic title/ });
+});
+
+test("PDF parser failures are rejected instead of becoming pending syllabus previews", () => {
+  assert.match(syllabusExtractionIssue(undefined, { selectedCourseId: "course-a", extractionFailed: true }), /text extraction failed/);
+  const validOutline = { subject_found_in_pdf: true, units: [{ number: 1, title: "Unit 1", topics: [{ title: "Topic" }] }] };
+  assert.equal(syllabusExtractionIssue(validOutline, { selectedCourseId: "course-a" }), null);
+  assert.match(syllabusExtractionIssue({ ...validOutline, units: [{ number: 1, title: "Unit 1", topics: [{ title: undefined }] }] }, { selectedCourseId: "course-a" }), /missing or invalid topic metadata/);
+  assert.match(syllabusExtractionIssue({ ...validOutline, units: [{ number: 1, title: "Unit 1", topics: [{ title: "Topic", subtopics: [undefined] }] }] }, { selectedCourseId: "course-a" }), /missing or invalid topic metadata/);
+});
+
+test("a syllabus with another subject name is rejected before review or publish", () => {
+  const extracted = parseSyllabusText("COMPUTER ORGANIZATION AND ARCHITECTURE\nUNIT I: Processor Design\nInstruction cycles", {
+    name: "Digital System Design", code: "ESECE201D",
+  });
+  assert.equal(extracted.subject_found_in_pdf, false);
+  assert.match(syllabusExtractionIssue(extracted, { selectedCourseId: "digital-design" }), /does not match the selected subject/);
+  assert.match(syllabusExtractionIssue(extracted, { selectedCourseId: "digital-design", sourceCourseId: "computer-architecture" }), /not associated with the selected subject/);
+});
+
+test("syllabus previews are scoped to the currently selected course", () => {
+  const sources = [
+    { id: "source-a", course_id: "course-a" },
+    { id: "source-b", course_id: "course-b" },
+  ];
+  assert.deepEqual(syllabusSourcesForCourse(sources, "course-a"), [sources[0]]);
+  assert.deepEqual(syllabusSourcesForCourse(sources, "course-c"), []);
+  assert.equal(sourceMatchesSelectedCourse(sources[0], "course-b"), false);
+  assert.equal(sourceMatchesSelectedCourse(sources[0], "course-a"), true);
+});
+
+test("syllabus API guards source keys and records the exact course before a preview can be returned", async () => {
+  const apiSource = await readFile(new URL("../api/syllabus-import.js", import.meta.url), "utf8");
+  assert.match(apiSource, /syllabusSourceKey\(topicTitle\)/);
+  assert.match(apiSource, /syllabusSourceKey\(subTitle\)/);
+  assert.match(apiSource, /selectedCourseId: courseId,[\s\S]*sourceCourseId: course\.id/);
+  assert.match(apiSource, /select\("id,course_id,status,extracted_outline,processing_error"\)/);
+  assert.match(apiSource, /selectedCourseId: source\.course_id, sourceCourseId: source\.course_id/);
 });
 
 test("migration keeps source documents private and requires active Super Admin policies", async () => {
