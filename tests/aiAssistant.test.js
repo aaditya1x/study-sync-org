@@ -126,9 +126,33 @@ test("AI Study Tools validate language choice and require an explicit free-tier-
   assert.match(aiLanguageInstruction("hinglish"), /Latin script/);
   assert.deepEqual(validateAIResponseOptions("english", false), { language: "english", webResearch: false });
   assert.throws(() => validateAIResponseOptions("french", false), /Auto Detect, English, Hindi, or Hinglish/);
-  assert.throws(() => validateAIResponseOptions("auto", true), { code: "GEMINI_FREE_TIER_SEARCH_NOT_ENABLED", status: 503 });
+  assert.throws(() => validateAIResponseOptions("auto", true), {
+    code: "GEMINI_FREE_TIER_SEARCH_NOT_ENABLED",
+    status: 503,
+    message: /GEMINI_WEB_GROUNDING_FREE_TIER_ONLY=true.*billing disabled.*normal Gemini answers/,
+  });
   assert.deepEqual(validateAIResponseOptions("hindi", true, { freeTierSearchEnabled: true }), { language: "hindi", webResearch: true });
   assert.match(buildAIStudyInstruction({ language: "hinglish", mode: "explain", hasPdf: true, hasWebResearch: true }), /selected uploaded PDF excerpts as the primary source/);
+  assert.deepEqual(validateAIResponseOptions("english", false), { language: "english", webResearch: false }, "normal Gemini requests remain valid when grounding is disabled");
+});
+
+test("Gemini configuration uses GEMINI_API_KEY and leaves web research opt-in by default", async () => {
+  const aiApi = await readFile(new URL("../api/ai.js", import.meta.url), "utf8");
+  const pdfApi = await readFile(new URL("../api/ask-book.js", import.meta.url), "utf8");
+  assert.match(aiApi, /readServerEnv\("GEMINI_API_KEY"\)/);
+  assert.match(pdfApi, /readServerEnv\("GEMINI_API_KEY"\)/);
+  assert.doesNotMatch(aiApi + pdfApi, /readServerEnv\("GEMINI_API_KEYS"\)/);
+  assert.match(pdfAssistantSource, /const \[webResearch, setWebResearch\] = useState\(false\)/);
+  assert.match(aiApi, /v1beta\/models\/gemini-3\.5-flash-lite:generateContent/);
+  assert.match(pdfApi, /v1beta\/models\/gemini-3\.5-flash-lite:generateContent/);
+});
+
+test("Gemini grounded-search API errors explain project/model access and quota without paid fallback", () => {
+  assert.equal(mapGeminiFailure(400, { webSearch: true }).code, "GEMINI_WEB_SEARCH_UNAVAILABLE");
+  assert.match(mapGeminiFailure(400, { webSearch: true }).error, /Google Search grounding is unavailable/);
+  assert.equal(mapGeminiFailure(429, { webSearch: true }).code, "GEMINI_WEB_SEARCH_QUOTA_EXCEEDED");
+  assert.match(mapGeminiFailure(429, { webSearch: true }).error, /No paid fallback/);
+  assert.equal(mapGeminiFailure(403, { webSearch: true }).code, "GEMINI_CREDENTIALS_REJECTED");
 });
 
 test("Gemini grounded search receives only the question and returns actually supported sources", async () => {

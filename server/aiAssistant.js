@@ -19,6 +19,11 @@ export function mapGeminiFailure(status, { pdf = false, webSearch = false } = {}
     code: "GEMINI_CREDENTIALS_REJECTED",
     error: "Gemini rejected the server API key or project access. Check GEMINI_API_KEY in Vercel.",
   };
+  if (webSearch && (status === 400 || status === 404)) return {
+    status: 502,
+    code: "GEMINI_WEB_SEARCH_UNAVAILABLE",
+    error: "Gemini Google Search grounding is unavailable for this project or model. Check Google AI Studio project access and model support; no paid fallback was attempted.",
+  };
   if (!pdf && status === 404) return {
     status: 502,
     error: "The Gemini model is unavailable for this API key or project.",
@@ -137,7 +142,7 @@ export function validateAIResponseOptions(language, webResearch, { freeTierSearc
     throw Object.assign(new Error("Web research must be enabled or disabled."), { status: 400 });
   }
   if (wantsWebResearch && !freeTierSearchEnabled) {
-    throw Object.assign(new Error("Web research is disabled until the Gemini project is confirmed to use its free tier without billing."), {
+    throw Object.assign(new Error("Web research is disabled on this deployment. A deployment admin must set GEMINI_WEB_GROUNDING_FREE_TIER_ONLY=true only after confirming the Gemini project has billing disabled. Turn off web research to continue with normal Gemini answers."), {
       status: 503,
       code: "GEMINI_FREE_TIER_SEARCH_NOT_ENABLED",
     });

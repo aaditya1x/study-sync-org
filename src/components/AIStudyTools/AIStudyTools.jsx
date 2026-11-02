@@ -30,7 +30,9 @@ export default function AIStudyTools({ materials = [], notify = () => {}, onOpen
   const [sourceDetails, setSourceDetails] = useState(null);
   const [bookName, setBookName] = useState("");
   const [language, setLanguage] = useState("auto");
-  const [webResearch, setWebResearch] = useState(true);
+  // Ordinary Gemini answers work by default; web grounding is explicitly opt-in
+  // because this deployment must be operator-confirmed as billing-disabled.
+  const [webResearch, setWebResearch] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -162,7 +164,7 @@ export default function AIStudyTools({ materials = [], notify = () => {}, onOpen
           </select>
           <label className={styles.researchToggle}>
             <input type="checkbox" checked={webResearch} onChange={(event) => setWebResearch(event.target.checked)} disabled={busy} />
-            <span><strong>Research open textbooks and the internet</strong><small>Gemini free-tier search; no paid fallback.</small></span>
+            <span><strong>Research open textbooks and the internet</strong><small>Optional Gemini Search grounding; deployment must be confirmed billing-free. No paid fallback.</small></span>
           </label>
         </div>
 
